@@ -5,12 +5,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=explorer
-Group=explorer
-WorkingDirectory=/srv/explorertoken/backend
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/haswork.dev/backend
 Environment=NODE_ENV=production
 EnvironmentFile=/etc/explorertoken/backend.env
-ExecStart=/usr/bin/node dist/index.js
+ExecStart=/usr/bin/node /var/www/haswork.dev/backend/dist/index.js
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s

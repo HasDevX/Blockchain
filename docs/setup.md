@@ -28,194 +28,166 @@ This doc covers local development and single-host deployment for ExplorerToken.
 
 ```bash- PostgreSQL 15+- npm 10+
 
-git clone https://github.com/HasDevX/Blockchain.git explorertoken
 
-cd explorertoken- Redis 7+- PostgreSQL 15+
+# ExplorerToken server setup
 
-nvm use
+The instructions below walk through provisioning a single Ubuntu VPS for ExplorerToken. They assume Ubuntu 22.04 LTS, systemd, and Nginx. Adapt usernames, domains, or paths if your environment differs.
 
-npm ci- Nginx (for reverse proxying on the VPS)- Redis 7+
+---
 
-```
-
-- systemd (or compatible init) on the VPS- Optional: `pnpm` or `docker` if you prefer containers for backing services
-
-## 2. Configure environment variables
-
-
-
-Copy the backend sample env file and adjust values for your environment:
-
-## 1. Clone and install dependencies## 1. Clone and install
+## 1. Bootstrap the host
 
 ```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y build-essential curl git nginx postgresql redis-server
 
-cp backend/.env.example backend/.env
+# Install Node.js 20 (LTS)
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
 
+sudo timedatectl set-timezone UTC
+sudo ufw allow OpenSSH
+sudo ufw allow 'Nginx Full'
+sudo ufw --force enable
 ```
 
-```bash```bash
-
-Key variables:
-
-git clone https://github.com/HasDevX/Blockchain.git explorertokengit clone git@github.com:your-org/explorer-token.git
-
-- `PORT`: Backend listen port (default `4000`)
-
-- `DATABASE_URL`: Postgres connection string (e.g. `postgresql://explorer:change-me@localhost:5432/explorer`)cd explorertokencd explorer-token
-
-- `REDIS_URL`: Redis connection string. Leave blank to fall back to in-memory rate limiting.
-
-- `FRONTEND_URL`: Comma-separated list of allowed browser origins (e.g. `http://localhost:5173`).nvm usenvm use
-
-
-
-## 3. Provision Postgres and Redis locallynpm cinpm install
-
-
-
-```bash```createdb explorer
-
-# PostgreSQL
-
-createdb explorerpsql -c "create user explorer with encrypted password 'change-me';"
-
-psql -c "create user explorer with encrypted password 'change-me';"
-
-psql -c "grant all privileges on database explorer to explorer;"## 2. Configure environment variablespsql -c "grant all privileges on database explorer to explorer;"
-
-
-
-# Redis (development)
-
-redis-server --port 6379
-
-```Copy the backend sample env file and adjust values for your environment:# Redis
-
-
-
-## 4. Run database migrationsredis-server --port 6379
-
-
-
-```bash```bash```
-
-npm run migrate --workspace backend
-
-```cp backend/.env.example backend/.env## 1. Clone and install dependencies
-
-
-
-The SQL migrations create admin user tables, chain metadata, and housekeeping checkpoints.``````bash
-
-
-
-## 5. Start development serversgit clone https://github.com/HasDevX/Blockchain.git explorertoken
-
-
-
-Use separate terminals (or the bundled VS Code tasks):Key variables:cd explorertoken
-
-
-
-```bashnvm use
-
-npm run dev --workspace backend
-
-npm run dev --workspace frontend- `PORT`: Backend listen port (default `4000`)npm ci
-
-```
-
-- `DATABASE_URL`: Postgres connection string (e.g. `postgresql://explorer:change-me@localhost:5432/explorer`)```
-
-The Vite dev server proxies API requests to `http://localhost:4000`.
-
-- `REDIS_URL`: Redis connection string. Leave blank to fall back to in-memory rate limiting.Update `backend/.env` based on `.env.example`:
-
-## 6. Quality gates before committing
-
-- `FRONTEND_URL`: Comma-separated list of allowed browser origins (e.g. `http://localhost:5173`).
+Create the deployment user and root directory:
 
 ```bash
+sudo useradd --system --home /var/www/haswork.dev --shell /usr/sbin/nologin explorertoken || true
+sudo mkdir -p /var/www/haswork.dev
+sudo chown -R explorertoken:explorertoken /var/www/haswork.dev
+```
 
-npm run lint```bash
+---
 
-npm run typecheck
+## 2. Fetch the code and build
 
-npm test --workspace backend## 3. Provision Postgres and Redis locallycp backend/.env.example backend/.env
+```bash
+cd /var/www/haswork.dev
+sudo -u explorertoken git clone https://github.com/HasDevX/Blockchain.git .
+sudo -u explorertoken npm ci
+sudo -u explorertoken npm run build
+```
 
-npm run build
+The build script compiles the backend into `backend/dist` and produces the frontend under `frontend/dist`, which Nginx serves.
 
-``````
+---
 
+## 3. Provision PostgreSQL
 
+```bash
+sudo -u postgres psql <<'SQL'
+CREATE USER explorertoken WITH ENCRYPTED PASSWORD 'change-me';
+CREATE DATABASE explorertoken OWNER explorertoken;
+GRANT ALL PRIVILEGES ON DATABASE explorertoken TO explorertoken;
+SQL
+```
 
-## 7. Deploying to a VPS```bash
+Connection string for later use:
 
+```
+postgresql://explorertoken:change-me@127.0.0.1:5432/explorertoken
+```
 
+---
 
-1. Copy `ops/nginx/explorertoken.conf` to `/etc/nginx/sites-available/`, update `server_name`, `root`, and any proxy IP allow-lists. Symlink into `sites-enabled` and reload Nginx.# PostgreSQLAdjust connection strings or API keys as needed.
+## 4. Secure Redis
 
-2. Copy `ops/systemd/explorertoken-backend.service` to `/etc/systemd/system/`, adjust `WorkingDirectory`/`ExecStart` if needed, then run:
+Keep Redis bound to localhost and restart it:
 
-   ```bashcreatedb explorer## 2. Configure environment variables
+```bash
+sudo sed -i "s/^#\?bind .*/bind 127.0.0.1/" /etc/redis/redis.conf
+sudo sed -i "s/^protected-mode no/protected-mode yes/" /etc/redis/redis.conf
+sudo systemctl restart redis-server
+```
 
-   sudo systemctl daemon-reload
+---
 
-   sudo systemctl enable explorertoken-backendpsql -c "create user explorer with encrypted password 'change-me';"Copy the backend sample env file and adjust values for your environment:
+## 5. Configure backend environment
 
-   sudo systemctl start explorertoken-backend
+```bash
+sudo mkdir -p /etc/explorertoken
+sudo tee /etc/explorertoken/backend.env >/dev/null <<'ENV'
+NODE_ENV=production
+PORT=4000
+DATABASE_URL=postgresql://explorertoken:change-me@127.0.0.1:5432/explorertoken
+REDIS_URL=redis://127.0.0.1:6379
+FRONTEND_URL=https://haswork.dev
+GIT_SHA=
+ENV
+sudo chown explorertoken:explorertoken /etc/explorertoken/backend.env
+sudo chmod 640 /etc/explorertoken/backend.env
 
-   ```psql -c "grant all privileges on database explorer to explorer;"```bash
+sudo -u explorertoken cp backend/.env.example backend/.env
+sudo -u explorertoken sed -i "s|DATABASE_URL=.*|DATABASE_URL=postgresql://explorertoken:change-me@127.0.0.1:5432/explorertoken|" backend/.env
+sudo -u explorertoken sed -i "s|REDIS_URL=.*|REDIS_URL=redis://127.0.0.1:6379|" backend/.env
+sudo -u explorertoken sed -i "s|FRONTEND_URL=.*|FRONTEND_URL=https://haswork.dev|" backend/.env
 
-3. Place environment variables in `/etc/explorertoken/backend.env` (sample values are in `docs/deployment.md`).
+sudo -u explorertoken npm run migrate --workspace backend
+```
 
-4. Use `ops/scripts/deploy.sh` for repeatable deployments after updating the repository path and remote/branch if necessary.cp backend/.env.example backend/.env
+---
 
+## 6. Install Nginx virtual host
 
+```bash
+sudo cp ops/nginx/explorertoken.conf /etc/nginx/sites-available/haswork.dev
+sudo ln -sf /etc/nginx/sites-available/haswork.dev /etc/nginx/sites-enabled/haswork.dev
+sudo nginx -t && sudo systemctl reload nginx
+```
 
-## 8. Acceptance checks# Redis (development)```
+The supplied config serves the frontend from `/var/www/haswork.dev/frontend/dist` and proxies `/api` + `/health` to the backend on port 4000.
 
+---
 
+## 7. Enable the backend service
 
-Run the following from the VPS:redis-server --port 6379Key variables:
+```bash
+sudo cp ops/systemd/explorertoken-backend.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable explorertoken-backend
+sudo systemctl restart explorertoken-backend
+```
 
+Verify status and logs:
 
+```bash
+sudo systemctl status explorertoken-backend --no-pager
+sudo journalctl -u explorertoken-backend -f
+```
 
-```bash```- `PORT`: Backend listen port (default `4000`)
+---
 
+## 8. Acceptance checks
+
+Run these from the VPS (adjust hostnames if fronted by a load balancer):
+
+```bash
 curl -I http://127.0.0.1/
-
-curl -I http://127.0.0.1/api/chains- `DATABASE_URL`: Postgres connection string (e.g. `postgresql://explorer:change-me@localhost:5432/explorer`)
-
+curl -I http://127.0.0.1/api/chains
 curl -I http://127.0.0.1/api/admin/settings
-
-curl -sS http://127.0.0.1:4000/health## 4. Run database migrations- `REDIS_URL`: Redis connection string. Leave blank to fall back to in-memory rate limiting.
-
+curl -sS http://127.0.0.1:4000/health
 ```
 
-- `FRONTEND_URL`: Comma-separated list of allowed browser origins (e.g. `http://localhost:5173`).
+Expected responses:
 
-Expected results:
+- `/` → `200 OK` from Nginx
+- `/api/chains` → `200 OK` JSON listing ten chains
+- `/api/admin/settings` → `401 Unauthorized` (or `403 Forbidden` for non-admin tokens)
+- `/health` → JSON `{ ok: true, version: <7-12 char git sha>, uptime: <seconds> }`
+- With Redis connected, the sixth rapid `POST /api/auth/login` should return `429 Too Many Requests`
 
-```bash## 3. Database migrations
-
-- `/` returns `200` (served by Nginx)
-
-- `/api/chains` returns `200`npm run migrate --workspace backend
-
-- `/api/admin/settings` returns `401` when unauthenticated and `403` for non-admin tokens
-
-- `/health` returns JSON `{ ok: true, version: <git sha>, uptime: <seconds>, services: {...} }```````bash
-
-- After Redis is configured, bursting `POST /api/auth/login` should eventually return `429`
-
-npm run migrate --workspace backend
+---
 
 ## 9. Troubleshooting
 
-The SQL migrations create admin user tables, chain metadata, and housekeeping checkpoints.## 3. Provision Postgres and Redis locally
+- **Backend won’t start:** check `journalctl -u explorertoken-backend` and confirm `npm run build` was executed after the latest pull.
+- **CORS complaints:** ensure `FRONTEND_URL` in `/etc/explorertoken/backend.env` matches the production origin (comma-separated to allow multiple).
+- **Redis fallback warning:** if logs mention `redis fallback limiter`, verify `redis-server` is running, reachable on 127.0.0.1, and credentials are correct.
+- **Missing assets:** rerun `npm run build` to regenerate `frontend/dist`.
 
+Future deployments can reuse this host by running `git pull`, `npm ci`, `npm run build`, and restarting the service.
 - **CORS errors**: verify `FRONTEND_URL` matches the origin you load the frontend from.
 
 - **Redis warnings**: the backend logs `memory_fallback` if Redis is unavailable; check service reachability and credentials.```bash
