@@ -69,5 +69,8 @@ describe("security middleware", () => {
 
     expect(limitedResponse.status).toBe(429);
     expect(limitedResponse.body).toEqual({ error: "rate_limited" });
+    expect(limitedResponse.get("ratelimit-limit")).toBeDefined();
+    expect(limitedResponse.get("ratelimit-remaining")).toBeDefined();
+    expect(limitedResponse.get("ratelimit-reset")).toBeDefined();
   });
 });

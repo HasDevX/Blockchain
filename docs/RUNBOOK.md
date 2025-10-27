@@ -37,6 +37,46 @@ sudo journalctl -u explorertoken-backend -n 40 --no-pager
 
 ---
 
+## Backup & retention
+
+Daily database backups are controlled by `/etc/cron.d/explorertoken-backups` (see `docs/BACKUPS.md`). Dumps land in `/var/backups/explorertoken` as `YYYYMMDD_explorertoken.dump.gz` and the retention prune runs at 04:15, keeping the most recent 14 files. Validate the job:
+
+```bash
+sudo -u explorertoken ls -lh /var/backups/explorertoken | tail
+sudo -u explorertoken pg_restore --list /var/backups/explorertoken/$(date +"%Y%m%d")_explorertoken.dump.gz | head
+```
+
+Escalate to infra if the directory is empty for more than 24 hours.
+
+---
+
+## Restore procedure
+
+1. Notify stakeholders and enable maintenance mode (`npm run admin:maintenance --workspace backend` once implemented).
+2. Copy the desired dump to `/tmp/restore.dump.gz` and decompress:
+
+   ```bash
+   sudo -u explorertoken cp /var/backups/explorertoken/20251018_explorertoken.dump.gz /tmp/restore.dump.gz
+   sudo -u explorertoken gunzip -f /tmp/restore.dump.gz
+   ```
+
+3. Restore into the primary database:
+
+   ```bash
+   sudo -u explorertoken pg_restore \
+     --clean --if-exists \
+     --dbname=explorertoken_db \
+     /tmp/restore.dump
+   ```
+
+4. Restart the backend service (`sudo systemctl restart explorertoken-backend`).
+5. Run health checks (`curl -sS http://127.0.0.1:4000/health`) and a smoke test via `/api/auth/login`.
+6. Disable maintenance mode and send the post-mortem summary.
+
+Record the restore in the ops log, including dump name and verification steps. Monthly restores must also verify the cold storage snapshot according to compliance policy.
+
+---
+
 ## Logs
 
 - Tail structured backend logs:
