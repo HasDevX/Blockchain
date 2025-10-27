@@ -6,6 +6,7 @@ import { createRateLimiters } from "./middleware/rateLimit";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 import { createApiRouter } from "./routes/api";
 import { createHealthRouter } from "./routes/health";
+import { getGitSha } from "./lib/gitInfo";
 
 const CSP_DIRECTIVES = {
   "default-src": ["'self'"],
@@ -18,6 +19,8 @@ const CSP_DIRECTIVES = {
 export async function createApp() {
   const env = loadEnv();
   const app = express();
+
+  getGitSha();
 
   app.disable("x-powered-by");
   app.set("trust proxy", 1);

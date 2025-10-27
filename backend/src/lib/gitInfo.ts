@@ -1,23 +1,56 @@
 import { execSync } from "child_process";
 
+const SHORT_SHA_REGEX = /^[0-9a-f]{7,12}$/;
+const FALLBACK_SHA = "0000000";
+
 let cachedGitSha: string | undefined;
 
-export function getGitSha(): string {
-  if (process.env.GIT_SHA) {
-    return process.env.GIT_SHA;
+function normalizeSha(raw?: string | null): string | undefined {
+  if (!raw) {
+    return undefined;
   }
 
+  const trimmed = raw.trim().toLowerCase();
+  if (SHORT_SHA_REGEX.test(trimmed)) {
+    return trimmed;
+  }
+
+  return undefined;
+}
+
+function resolveGitSha(): string {
+  const envSha = normalizeSha(process.env.GIT_SHA);
+  if (envSha) {
+    cachedGitSha = envSha;
+    return envSha;
+  }
+
+  try {
+    const output = execSync("git rev-parse --short=12 HEAD", {
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .toString()
+      .trim();
+
+    const match = normalizeSha(output) ?? output.match(/[0-9a-f]{7,12}/i)?.[0]?.toLowerCase();
+    if (match) {
+      cachedGitSha = match;
+      process.env.GIT_SHA = match;
+      return match;
+    }
+  } catch (error) {
+    // ignore and fall through to fallback
+  }
+
+  cachedGitSha = FALLBACK_SHA;
+  process.env.GIT_SHA = FALLBACK_SHA;
+  return FALLBACK_SHA;
+}
+
+export function getGitSha(): string {
   if (cachedGitSha) {
     return cachedGitSha;
   }
 
-  try {
-    cachedGitSha = execSync("git rev-parse HEAD", { stdio: ["ignore", "pipe", "ignore"] })
-      .toString()
-      .trim();
-  } catch (error) {
-    cachedGitSha = "dev";
-  }
-
-  return cachedGitSha ?? "dev";
+  return resolveGitSha();
 }

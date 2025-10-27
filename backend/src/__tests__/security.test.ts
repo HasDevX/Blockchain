@@ -52,6 +52,7 @@ describe("security middleware", () => {
     expect(response.status).toBe(200);
     expect(response.body.ok).toBe(true);
     expect(typeof response.body.version).toBe("string");
+    expect(response.body.version).toMatch(/^[0-9a-f]{7,12}$/);
     expect(typeof response.body.uptime).toBe("number");
   });
 
