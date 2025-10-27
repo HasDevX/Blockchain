@@ -55,13 +55,11 @@ export function createTokensRouter() {
         limit,
       });
 
-      const payload: { items: typeof holders.items; nextCursor?: string } = {
+      const payload: { items: typeof holders.items; nextCursor: string | null; status: string } = {
         items: holders.items,
+        nextCursor: holders.nextCursor ?? null,
+        status: holders.status,
       };
-
-      if (holders.nextCursor) {
-        payload.nextCursor = holders.nextCursor;
-      }
 
       res.json(payload);
     } catch (error) {
@@ -71,7 +69,7 @@ export function createTokensRouter() {
       }
 
       console.error("Failed to fetch token holders", error);
-      res.status(502).json({ error: "vendor_unavailable" });
+      res.status(500).json({ error: "holders_unavailable" });
     }
   });
 

@@ -61,9 +61,11 @@ export function TokenPage() {
   }
 
   const holders = holdersQuery.data;
+  const holdersStatus = holders?.status ?? "ok";
+  const isIndexing = holdersStatus === "indexing";
   const holdersItems = holders?.items ?? [];
   const isInitialLoading = holdersQuery.isLoading && !holders;
-  const isRefreshing = holdersQuery.isValidating && holdersItems.length > 0;
+  const isRefreshing = holdersQuery.isValidating && Boolean(holders);
   const holdersError = holdersQuery.error as ApiError | undefined;
   const holdersAlert = holdersError
     ? holdersError.status === 429
@@ -78,10 +80,23 @@ export function TokenPage() {
           message: "Something went wrong while fetching holders. Please retry shortly.",
         }
     : null;
+  const indexingAlert =
+    !holdersAlert && isIndexing
+      ? {
+          variant: "info" as const,
+          title: "Indexing holders",
+          message: "We're still indexing holders for this token. Data will refresh automatically.",
+        }
+      : null;
 
   const nextCursor = holders?.nextCursor ?? null;
   const hasNext = Boolean(nextCursor);
   const hasPrev = cursorHistory.length > 0;
+  const holdersEmptyState = holdersAlert
+    ? undefined
+    : isIndexing
+      ? "Indexing in progress. Check back shortly."
+      : "No holders found for this token yet.";
 
   function goToNext() {
     if (!nextCursor) {
@@ -176,6 +191,11 @@ export function TokenPage() {
                 {holdersAlert.message}
               </Alert>
             ) : null}
+            {indexingAlert ? (
+              <Alert variant={indexingAlert.variant} title={indexingAlert.title} className="mb-3">
+                {indexingAlert.message}
+              </Alert>
+            ) : null}
             <Table<TokenHolder>
               columns={[
                 {
@@ -204,7 +224,7 @@ export function TokenPage() {
                 },
               ]}
               data={holdersItems}
-              emptyState="No holders indexed yet."
+              emptyState={holdersEmptyState}
               isLoading={isInitialLoading}
               loadingState={
                 <span className="inline-flex items-center justify-center gap-2 text-slate-300">
@@ -218,7 +238,13 @@ export function TokenPage() {
               getRowKey={(row: TokenHolder) => `${row.holder}-${row.rank}`}
             />
           </div>
-          {isRefreshing ? <p className="mt-2 text-xs text-slate-500">Refreshing holders…</p> : null}
+          {isRefreshing ? (
+            <p className="mt-2 text-xs text-slate-500">
+              {isIndexing
+                ? "Indexing in progress — automatically refreshing."
+                : "Refreshing holders…"}
+            </p>
+          ) : null}
           <div className="mt-4 flex items-center justify-between text-sm text-slate-400">
             <button
               type="button"

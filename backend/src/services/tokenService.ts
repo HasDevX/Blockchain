@@ -1,19 +1,14 @@
+import type { Pool } from "pg";
 import { CHAINS, getChainById } from "../config/chains";
-import { getChainAdapter, type ChainAdapterConfig } from "../config/chainAdapters";
+import { getChainAdapter } from "../config/chainAdapters";
 import { loadEnv } from "../config/env";
-import { getRedisClient } from "../lib/redisClient";
+import { getPool } from "../lib/db";
 import { EtherscanClient } from "../vendors/etherscanClient";
-import {
-  EtherscanUpstreamError,
-  EtherscanV2Client,
-  type EtherscanTokenHolderData,
-  type EtherscanTokenHolderDto,
-  type EtherscanVendorResult,
-} from "../vendors/etherscanV2";
+import { addressToBuffer, bufferToAddress, normalizeAddress } from "./holderStore";
+import { getTokenCursor } from "./tokenHolderRepository";
 
 const env = loadEnv();
 const etherscanClient = new EtherscanClient(env.etherscanApiKey);
-const etherscanV2Client = new EtherscanV2Client();
 
 export interface TokenSummary {
   chainId: number;
@@ -37,6 +32,7 @@ export interface TokenHolder {
 export interface TokenHoldersResponse {
   items: TokenHolder[];
   nextCursor?: string;
+  status: "ok" | "indexing";
 }
 
 export interface GetTokenHoldersParams {
@@ -53,20 +49,14 @@ export class UnsupportedChainError extends Error {
   }
 }
 
-const HOLDERS_CACHE_PREFIX = "holders";
-const CACHE_TTL_MIN_SECONDS = 30;
-const CACHE_TTL_MAX_SECONDS = 60;
-const chainRequestQueues = new Map<number, Promise<unknown>>();
-const chainNextAllowedAt = new Map<number, number>();
+interface HolderCursor {
+  balance: bigint;
+  holder: string;
+}
 
-const redisClientPromise: Promise<Awaited<ReturnType<typeof getRedisClient>>> = getRedisClient(env);
-
-type Fetcher<T> = () => Promise<T>;
-
-type RedisClient = Exclude<Awaited<typeof redisClientPromise>, null>;
-
-function delay(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+interface HolderRow {
+  holder: Buffer;
+  balance: string;
 }
 
 function clampLimit(raw?: number): number {
@@ -75,6 +65,7 @@ function clampLimit(raw?: number): number {
   }
 
   const value = Math.floor(raw as number);
+
   if (value < 1) {
     return 1;
   }
@@ -86,323 +77,86 @@ function clampLimit(raw?: number): number {
   return value;
 }
 
-function parseCursor(raw?: string | null): number {
+function decodeCursor(raw?: string | null): HolderCursor | null {
   if (!raw) {
-    return 1;
+    return null;
   }
 
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    return 1;
+  const [balancePart, holderPart] = raw.split(":");
+
+  if (!balancePart || !holderPart) {
+    return null;
   }
 
-  return Math.floor(parsed);
+  try {
+    const balance = BigInt(balancePart);
+    const holder = normalizeAddress(holderPart);
+    return { balance, holder };
+  } catch (error) {
+    console.warn("failed to decode holders cursor", error);
+    return null;
+  }
 }
 
-async function resolveRedisClient(): Promise<RedisClient | null> {
-  return redisClientPromise;
+function encodeCursor(cursor: HolderCursor): string {
+  return `${cursor.balance.toString(10)}:${cursor.holder.toLowerCase()}`;
 }
 
-async function withRateBudget<T>(adapter: ChainAdapterConfig, task: Fetcher<T>): Promise<T> {
-  const previous = chainRequestQueues.get(adapter.chainId) ?? Promise.resolve();
-  const run = previous
-    .catch(() => undefined)
-    .then(async () => {
-      await enforceRateBudget(adapter);
-      return task();
-    });
-
-  chainRequestQueues.set(
-    adapter.chainId,
-    run.then(
-      () => undefined,
-      () => undefined,
-    ),
+async function countPrecedingRows(
+  pool: Pool,
+  chainId: number,
+  tokenBuffer: Buffer,
+  cursor: HolderCursor,
+): Promise<bigint> {
+  const result = await pool.query<{ count: string }>(
+    `SELECT COUNT(*)::TEXT AS count
+     FROM token_holders
+     WHERE chain_id = $1 AND token = $2
+       AND (balance > $3::NUMERIC OR (balance = $3::NUMERIC AND holder < $4::BYTEA))`,
+    [chainId, tokenBuffer, cursor.balance.toString(), addressToBuffer(cursor.holder)],
   );
-  return run;
+
+  return BigInt(result.rows[0]?.count ?? "0");
 }
 
-async function enforceRateBudget(adapter: ChainAdapterConfig) {
-  const minIntervalMs = Math.ceil(1000 / adapter.rateBudget.requestsPerSecond);
-  const now = Date.now();
-  const nextAllowed = chainNextAllowedAt.get(adapter.chainId) ?? now;
-  const waitMs = Math.max(0, nextAllowed - now);
+async function fetchTotalSupply(
+  pool: Pool,
+  chainId: number,
+  tokenBuffer: Buffer,
+): Promise<bigint | null> {
+  const result = await pool.query<{ sum: string | null }>(
+    `SELECT SUM(balance)::TEXT AS sum
+     FROM token_holders
+     WHERE chain_id = $1 AND token = $2`,
+    [chainId, tokenBuffer],
+  );
 
-  if (waitMs > 0) {
-    const jitter = Math.floor(Math.random() * 75);
-    const totalWait = waitMs + jitter;
-    console.warn(
-      JSON.stringify({
-        event: "holders.rate_limit.wait",
-        chainId: adapter.chainId,
-        waitMs,
-        jitterMs: jitter,
-        vendor: adapter.vendor,
-      }),
-    );
-    await delay(totalWait);
-  }
-
-  chainNextAllowedAt.set(adapter.chainId, Date.now() + minIntervalMs);
+  const value = result.rows[0]?.sum;
+  return value ? BigInt(value) : null;
 }
 
-function normalizeEtherscanPayload(
-  dtoList: EtherscanTokenHolderDto[] | undefined,
-  page: number,
-  limit: number,
-): TokenHoldersResponse {
-  if (!Array.isArray(dtoList) || dtoList.length === 0) {
-    return { items: [] };
+function mapHolderRow(
+  row: HolderRow,
+  baseRank: bigint,
+  index: number,
+  totalSupply: bigint | null,
+): TokenHolder {
+  const balanceBigInt = BigInt(row.balance);
+  const rank = Number(baseRank + BigInt(index) + 1n);
+
+  let pct = 0;
+
+  if (totalSupply && totalSupply > 0n) {
+    const scaled = (balanceBigInt * 100_000n) / totalSupply;
+    pct = Number(scaled) / 1_000;
   }
-
-  const baseRank = (page - 1) * limit;
-  const items: TokenHolder[] = dtoList.map((dto, index) => {
-    const rank = dto.TokenHolderRank ? Number(dto.TokenHolderRank) : baseRank + index + 1;
-    const pctValue = dto.TokenHolderPercentage ? Number(dto.TokenHolderPercentage) : 0;
-
-    return {
-      rank: Number.isFinite(rank) ? rank : baseRank + index + 1,
-      holder: dto.TokenHolderAddress,
-      balance: dto.TokenHolderQuantity,
-      pct: Number.isFinite(pctValue) ? pctValue : 0,
-    };
-  });
 
   return {
-    items,
-    nextCursor: items.length === limit ? String(page + 1) : undefined,
+    rank,
+    holder: bufferToAddress(row.holder),
+    balance: row.balance,
+    pct,
   };
-}
-
-async function fetchTokenHoldersFromVendor(
-  adapter: ChainAdapterConfig,
-  address: string,
-  page: number,
-  limit: number,
-): Promise<TokenHoldersResponse> {
-  switch (adapter.vendor) {
-    case "etherscan": {
-      const vendorResult = await etherscanV2Client.getTokenHolders(
-        adapter.chainId,
-        address,
-        page,
-        limit,
-      );
-
-      return transformEtherscanResponse(vendorResult, adapter.chainId, page, limit);
-    }
-    default:
-      throw new Error(`Unsupported vendor ${adapter.vendor}`);
-  }
-}
-
-function extractHolderList(result: EtherscanVendorResult): EtherscanTokenHolderDto[] | undefined {
-  if (Array.isArray(result.payload.result)) {
-    return result.payload.result;
-  }
-
-  const data = result.payload.data;
-
-  if (data && typeof data === "object") {
-    const items = (data as { items?: unknown }).items;
-    if (Array.isArray(items)) {
-      return items as EtherscanTokenHolderDto[];
-    }
-
-    const nestedResult = (data as { result?: unknown }).result;
-    if (Array.isArray(nestedResult)) {
-      return nestedResult as EtherscanTokenHolderDto[];
-    }
-  }
-
-  return undefined;
-}
-
-function isNoRecordsMessage(message?: string) {
-  const lower = message?.toLowerCase() ?? "";
-  return lower.includes("no tokens") || lower.includes("no records") || lower.includes("no data");
-}
-
-function transformEtherscanResponse(
-  vendorResult: EtherscanVendorResult,
-  chainId: number,
-  page: number,
-  limit: number,
-): TokenHoldersResponse {
-  const vendorStatus = vendorResult.payload.status;
-  const vendorMessage = vendorResult.payload.message;
-  const fallbackResultMessage =
-    typeof vendorResult.payload.result === "string" ? vendorResult.payload.result : undefined;
-
-  const holderList = extractHolderList(vendorResult);
-
-  if (holderList) {
-    const normalized = normalizeEtherscanPayload(holderList, page, limit);
-    const vendorCursor = extractNextCursorFromData(
-      vendorResult.payload.data,
-      page,
-      limit,
-      normalized.items.length,
-    );
-
-    return {
-      items: normalized.items,
-      nextCursor: vendorCursor ?? normalized.nextCursor,
-    };
-  }
-
-  if (isNoRecordsMessage(vendorMessage) || isNoRecordsMessage(fallbackResultMessage)) {
-    return { items: [] };
-  }
-
-  if (
-    isInvalidApiKeyMessage(vendorMessage) ||
-    isInvalidApiKeyMessage(fallbackResultMessage) ||
-    isDeprecatedMessage(vendorMessage) ||
-    isDeprecatedMessage(fallbackResultMessage) ||
-    (vendorStatus && vendorStatus !== "1")
-  ) {
-    throw new EtherscanUpstreamError({
-      chainId,
-      host: vendorResult.host,
-      httpStatus: vendorResult.httpStatus,
-      vendorStatus,
-      vendorMessage: vendorMessage ?? fallbackResultMessage ?? "unknown vendor error",
-    });
-  }
-
-  throw new EtherscanUpstreamError({
-    chainId,
-    host: vendorResult.host,
-    httpStatus: vendorResult.httpStatus,
-    vendorStatus,
-    vendorMessage: vendorMessage ?? fallbackResultMessage ?? "unknown vendor error",
-  });
-}
-
-function extractNextCursorFromData(
-  data: EtherscanTokenHolderData | undefined,
-  currentPage: number,
-  limit: number,
-  itemCount: number,
-): string | undefined {
-  if (!data) {
-    return itemCount === limit ? String(currentPage + 1) : undefined;
-  }
-
-  const directCursor =
-    asString(data.cursor) ??
-    asString(data.nextPageToken) ??
-    asString(data.next_page_token) ??
-    asString((data as Record<string, unknown>).nextCursor);
-
-  if (directCursor) {
-    return directCursor;
-  }
-
-  const pagination = (data as Record<string, unknown>).pagination;
-  if (pagination && typeof pagination === "object") {
-    const paginationCursor =
-      asString((pagination as Record<string, unknown>).cursor) ??
-      asString((pagination as Record<string, unknown>).nextCursor) ??
-      asString((pagination as Record<string, unknown>).nextPageToken) ??
-      asString((pagination as Record<string, unknown>).next_page_token);
-
-    if (paginationCursor) {
-      return paginationCursor;
-    }
-
-    const paginationHasMore = asBoolean(
-      (pagination as Record<string, unknown>).hasMore ??
-        (pagination as Record<string, unknown>).has_more,
-    );
-    const paginationPage = asNumber(
-      (pagination as Record<string, unknown>).page ??
-        (pagination as Record<string, unknown>).currentPage ??
-        (pagination as Record<string, unknown>).current_page,
-    );
-
-    if (paginationHasMore === true && typeof paginationPage === "number") {
-      return String(paginationPage + 1);
-    }
-  }
-
-  const hasMore =
-    asBoolean(data.hasMore) ??
-    asBoolean(data.has_more) ??
-    asBoolean((data as Record<string, unknown>).more);
-
-  const pageValue = asNumber(data.page ?? data.currentPage ?? data.current_page);
-  const totalPages = asNumber(data.totalPages ?? data.total_pages);
-
-  if (hasMore === true && typeof pageValue === "number") {
-    return String(pageValue + 1);
-  }
-
-  if (typeof pageValue === "number" && typeof totalPages === "number" && totalPages > pageValue) {
-    return String(pageValue + 1);
-  }
-
-  return itemCount === limit ? String(currentPage + 1) : undefined;
-}
-
-function asString(value: unknown): string | undefined {
-  if (typeof value === "string" && value.trim().length > 0) {
-    return value;
-  }
-
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return String(value);
-  }
-
-  return undefined;
-}
-
-function asNumber(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-
-  if (typeof value === "string" && value.trim().length > 0) {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-
-  return undefined;
-}
-
-function asBoolean(value: unknown): boolean | undefined {
-  if (typeof value === "boolean") {
-    return value;
-  }
-
-  if (typeof value === "string") {
-    const lower = value.toLowerCase();
-    if (lower === "true") {
-      return true;
-    }
-    if (lower === "false") {
-      return false;
-    }
-  }
-
-  return undefined;
-}
-
-function isInvalidApiKeyMessage(message?: string) {
-  const lower = message?.toLowerCase() ?? "";
-  return lower.includes("invalid api key");
-}
-
-function isDeprecatedMessage(message?: string) {
-  const lower = message?.toLowerCase() ?? "";
-  return lower.includes("deprecated") || lower.includes("v1");
-}
-
-function buildCacheKey(chainId: number, address: string, cursor: number, limit: number): string {
-  return `${HOLDERS_CACHE_PREFIX}:${chainId}:${address}:${cursor}:${limit}`;
 }
 
 export async function getTokenSummary(
@@ -444,36 +198,58 @@ export async function getTokenHolders({
     throw new UnsupportedChainError(chainId);
   }
 
-  const normalizedAddress = address.trim().toLowerCase();
+  const normalizedAddress = normalizeAddress(address);
   const normalizedLimit = clampLimit(limit);
-  const page = parseCursor(cursor);
-  const cacheKey = buildCacheKey(chainId, normalizedAddress, page, normalizedLimit);
+  const cursorData = decodeCursor(cursor ?? null);
+  const tokenBuffer = addressToBuffer(normalizedAddress);
+  const pool = getPool();
 
-  const redis = await resolveRedisClient();
+  const cursorRow = await getTokenCursor(pool, chainId, normalizedAddress);
+  const status: "ok" | "indexing" = cursorRow && cursorRow.toBlock !== null ? "ok" : "indexing";
 
-  if (redis) {
-    const cached = await redis.get(cacheKey);
-    if (cached) {
-      return JSON.parse(cached) as TokenHoldersResponse;
-    }
+  const params: unknown[] = [chainId, tokenBuffer, normalizedLimit];
+  let cursorClause = "";
+
+  if (cursorData) {
+    params.push(cursorData.balance.toString(), addressToBuffer(cursorData.holder));
+    cursorClause = "AND (balance < $4::NUMERIC OR (balance = $4::NUMERIC AND holder > $5::BYTEA))";
   }
 
-  const result = await withRateBudget(adapter, () =>
-    fetchTokenHoldersFromVendor(adapter, normalizedAddress, page, normalizedLimit),
+  const result = await pool.query<HolderRow>(
+    `SELECT holder, balance::TEXT AS balance
+     FROM token_holders
+     WHERE chain_id = $1 AND token = $2
+     ${cursorClause}
+     ORDER BY balance DESC, holder ASC
+     LIMIT $3`,
+    params,
   );
 
-  if (redis) {
-    const ttl =
-      CACHE_TTL_MIN_SECONDS +
-      Math.floor(Math.random() * (CACHE_TTL_MAX_SECONDS - CACHE_TTL_MIN_SECONDS + 1));
-    await redis.set(cacheKey, JSON.stringify(result), { EX: ttl });
+  let baseRank = 0n;
+
+  if (cursorData) {
+    baseRank = await countPrecedingRows(pool, chainId, tokenBuffer, cursorData);
   }
 
-  return result;
+  const totalSupply = await fetchTotalSupply(pool, chainId, tokenBuffer);
+
+  const items = result.rows.map((row, index) => mapHolderRow(row, baseRank, index, totalSupply));
+
+  const nextCursor =
+    items.length === normalizedLimit
+      ? encodeCursor({
+          balance: BigInt(items[items.length - 1]?.balance ?? "0"),
+          holder: items[items.length - 1]?.holder ?? normalizedAddress,
+        })
+      : undefined;
+
+  return {
+    items,
+    nextCursor,
+    status,
+  };
 }
 
 export function listChains() {
   return CHAINS;
 }
-
-export { EtherscanUpstreamError } from "../vendors/etherscanV2";

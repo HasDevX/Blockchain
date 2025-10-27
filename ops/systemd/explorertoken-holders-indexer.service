@@ -1,0 +1,22 @@
+[Unit]
+Description=ExplorerToken Holders Indexer
+After=network.target redis.service postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/haswork.dev/backend
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/explorertoken/backend.env
+ExecStart=/usr/bin/node /var/www/haswork.dev/backend/dist/workers/holdersIndexer.js
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGTERM
+TimeoutStopSec=20s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

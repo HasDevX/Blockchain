@@ -1,343 +1,278 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const redisStore = new Map<string, string>();
-const redisClientMock = {
-  get: vi.fn(async (key: string) => redisStore.get(key) ?? null),
-  set: vi.fn(async (key: string, value: string) => {
-    redisStore.set(key, value);
-    return "OK";
-  }),
-};
-const getRedisClientMock = vi.fn(async () => redisClientMock);
+interface HolderEntry {
+  chainId: number;
+  token: string;
+  holder: string;
+  balance: bigint;
+}
 
-vi.mock("../lib/redisClient", () => ({
-  getRedisClient: getRedisClientMock,
-}));
+interface CursorEntry {
+  chainId: number;
+  token: string;
+  fromBlock: string | null;
+  toBlock: string | null;
+}
+
+class MockPool {
+  private cursor: CursorEntry | null = null;
+  private holders: HolderEntry[] = [];
+
+  reset() {
+    this.cursor = null;
+    this.holders = [];
+  }
+
+  setCursor(entry: CursorEntry) {
+    this.cursor = {
+      chainId: entry.chainId,
+      token: normalize(entry.token),
+      fromBlock: entry.fromBlock,
+      toBlock: entry.toBlock,
+    };
+  }
+
+  setHolders(entries: Array<Omit<HolderEntry, "balance"> & { balance: number | bigint | string }>) {
+    this.holders = entries.map((entry) => ({
+      chainId: entry.chainId,
+      token: normalize(entry.token),
+      holder: normalize(entry.holder),
+      balance: BigInt(entry.balance),
+    }));
+  }
+
+  async query(text: string, params: unknown[]) {
+    if (text.includes("FROM token_index_cursor")) {
+      return this.handleCursorQuery(params);
+    }
+
+    if (text.startsWith("SELECT SUM(balance)::TEXT")) {
+      return this.handleSumQuery(params);
+    }
+
+    if (text.startsWith("SELECT COUNT(*)::TEXT")) {
+      return this.handleCountQuery(params);
+    }
+
+    if (text.startsWith("SELECT holder, balance::TEXT")) {
+      return this.handleHolderQuery(text, params);
+    }
+
+    throw new Error(`Unexpected query: ${text}`);
+  }
+
+  private handleCursorQuery(params: unknown[]) {
+    const chainId = params[0] as number;
+    const token = bufferToHex(params[1] as Buffer);
+
+    if (this.cursor && this.cursor.chainId === chainId && this.cursor.token === token) {
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            chain_id: this.cursor.chainId,
+            token: Buffer.from(this.cursor.token.slice(2), "hex"),
+            from_block: this.cursor.fromBlock,
+            to_block: this.cursor.toBlock,
+            updated_at: new Date(),
+          },
+        ],
+      };
+    }
+
+    return { rows: [], rowCount: 0 };
+  }
+
+  private handleSumQuery(params: unknown[]) {
+    const chainId = params[0] as number;
+    const token = bufferToHex(params[1] as Buffer);
+
+    const total = this.holders
+      .filter((entry) => entry.chainId === chainId && entry.token === token)
+      .reduce((acc, entry) => acc + entry.balance, 0n);
+
+    return {
+      rowCount: 1,
+      rows: [
+        {
+          sum: total === 0n ? null : total.toString(),
+        },
+      ],
+    };
+  }
+
+  private handleCountQuery(params: unknown[]) {
+    const chainId = params[0] as number;
+    const token = bufferToHex(params[1] as Buffer);
+    const balanceCursor = BigInt(params[2] as string);
+    const holderCursor = bufferToHex(params[3] as Buffer);
+
+    const count = this.holders.filter((entry) => {
+      if (entry.chainId !== chainId || entry.token !== token) {
+        return false;
+      }
+
+      if (entry.balance > balanceCursor) {
+        return true;
+      }
+
+      if (entry.balance === balanceCursor) {
+        return entry.holder < holderCursor;
+      }
+
+      return false;
+    }).length;
+
+    return {
+      rowCount: 1,
+      rows: [
+        {
+          count: count.toString(),
+        },
+      ],
+    };
+  }
+
+  private handleHolderQuery(text: string, params: unknown[]) {
+    const chainId = params[0] as number;
+    const token = bufferToHex(params[1] as Buffer);
+    const limit = params[2] as number;
+    const hasCursor = text.includes("balance < $4");
+
+    let filtered = this.holders.filter(
+      (entry) => entry.chainId === chainId && entry.token === token,
+    );
+
+    if (hasCursor) {
+      const balanceCursor = BigInt(params[3] as string);
+      const holderCursor = bufferToHex(params[4] as Buffer);
+      filtered = filtered.filter((entry) => {
+        if (entry.balance < balanceCursor) {
+          return true;
+        }
+
+        if (entry.balance === balanceCursor) {
+          return entry.holder > holderCursor;
+        }
+
+        return false;
+      });
+    }
+
+    filtered.sort((a, b) => {
+      if (a.balance !== b.balance) {
+        return b.balance > a.balance ? 1 : -1;
+      }
+      return a.holder.localeCompare(b.holder);
+    });
+
+    const rows = filtered.slice(0, limit).map((entry) => ({
+      holder: Buffer.from(entry.holder.slice(2), "hex"),
+      balance: entry.balance.toString(),
+    }));
+
+    return { rows, rowCount: rows.length };
+  }
+}
+
+function normalize(address: string): string {
+  return `0x${address.toLowerCase().replace(/^0x/, "")}`;
+}
+
+function bufferToHex(buffer: Buffer): string {
+  return `0x${buffer.toString("hex")}`;
+}
 
 describe("getTokenHolders", () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
+  const mockPool = new MockPool();
 
   beforeEach(() => {
     vi.resetModules();
-    redisStore.clear();
-    redisClientMock.get.mockClear();
-    redisClientMock.set.mockClear();
-    getRedisClientMock.mockClear();
+    mockPool.reset();
 
-    fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+    vi.doMock("../lib/db", () => ({
+      getPool: () => mockPool,
+    }));
   });
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    delete process.env.POLYGONSCAN_API_KEY;
-    delete process.env.ETHERSCAN_API_KEY;
-  });
-
-  it("normalizes polygon holders using the etherscan adapter", async () => {
-    process.env.ETHERSCAN_API_KEY = "shared-key";
-    process.env.POLYGONSCAN_API_KEY = "polygon-override";
-
-    fetchMock.mockResolvedValue({
-      ok: true,
-      status: 200,
-      headers: new Headers(),
-      json: async () => ({
-        status: "1",
-        message: "OK",
-        result: [
-          {
-            TokenHolderAddress: "0xholder1",
-            TokenHolderQuantity: "5000",
-            TokenHolderRank: "1",
-            TokenHolderPercentage: "50.12",
-          },
-          {
-            TokenHolderAddress: "0xholder2",
-            TokenHolderQuantity: "4000",
-            TokenHolderRank: "2",
-            TokenHolderPercentage: "40.01",
-          },
-        ],
-      }),
-    } as unknown as Response);
-
-    const { getTokenHolders } = await import("../services/tokenService");
-
-    const result = await getTokenHolders({
-      chainId: 137,
-      address: "0xABCDEFabcdefabcdefabcdefabcdefabcdefABCD",
-      limit: 2,
-      cursor: null,
-    });
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [urlArg, optionsArg] = fetchMock.mock.calls[0] ?? [];
-    const requestUrl = new URL(urlArg as string);
-    const headers = (optionsArg as RequestInit | undefined)?.headers as
-      | Record<string, string>
-      | undefined;
-
-    expect(requestUrl.origin + requestUrl.pathname).toBe(
-      "https://api.polygonscan.com/api/v2/token/holders",
-    );
-    expect(requestUrl.searchParams.get("contractaddress")).toBe(
-      "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
-    );
-    expect(requestUrl.searchParams.get("page")).toBe("1");
-    expect(requestUrl.searchParams.get("pagesize")).toBe("2");
-    expect(requestUrl.searchParams.get("sort")).toBe("desc");
-    expect(requestUrl.searchParams.has("apikey")).toBe(false);
-    expect(headers).toMatchObject({
-      Accept: "application/json",
-      "X-API-Key": "polygon-override",
-    });
-
-    expect(result.items).toEqual([
-      { rank: 1, holder: "0xholder1", balance: "5000", pct: 50.12 },
-      { rank: 2, holder: "0xholder2", balance: "4000", pct: 40.01 },
-    ]);
-    expect(result.nextCursor).toBe("2");
-  });
-
-  it("falls back to shared etherscan key when no override exists", async () => {
-    process.env.ETHERSCAN_API_KEY = "shared-only-key";
-
-    fetchMock.mockResolvedValue({
-      ok: true,
-      status: 200,
-      headers: new Headers(),
-      json: async () => ({
-        status: "1",
-        message: "OK",
-        result: [
-          {
-            TokenHolderAddress: "0xholder",
-            TokenHolderQuantity: "123",
-          },
-        ],
-      }),
-    } as unknown as Response);
-
-    const { getTokenHolders } = await import("../services/tokenService");
-
-    await getTokenHolders({
-      chainId: 1,
-      address: "0x123",
-      cursor: null,
-      limit: 25,
-    });
-
-    const [, optionsArg] = fetchMock.mock.calls[0] ?? [];
-    const headers = (optionsArg as RequestInit | undefined)?.headers as
-      | Record<string, string>
-      | undefined;
-
-    expect(headers).toMatchObject({ "X-API-Key": "shared-only-key" });
-  });
-
-  it("normalizes v2-style holder payloads from data.items", async () => {
-    process.env.ETHERSCAN_API_KEY = "shared-key";
-
-    fetchMock.mockResolvedValue({
-      ok: true,
-      status: 200,
-      headers: new Headers(),
-      json: async () => ({
-        status: "1",
-        message: "OK",
-        data: {
-          items: [
-            {
-              TokenHolderAddress: "0xholder1",
-              TokenHolderQuantity: "999",
-              TokenHolderPercentage: "12.5",
-            },
-            {
-              TokenHolderAddress: "0xholder2",
-              TokenHolderQuantity: "500",
-            },
-          ],
-          nextPageToken: "cursor-2",
-        },
-      }),
-    } as unknown as Response);
-
+  it("returns indexing status before any cursor is present", async () => {
     const { getTokenHolders } = await import("../services/tokenService");
 
     const result = await getTokenHolders({
       chainId: 1,
-      address: "0xabc",
+      address: "0x0000000000000000000000000000000000000abc",
       cursor: null,
-      limit: 25,
+      limit: 5,
     });
 
-    expect(result.items).toEqual([
-      { rank: 1, holder: "0xholder1", balance: "999", pct: 12.5 },
-      { rank: 2, holder: "0xholder2", balance: "500", pct: 0 },
-    ]);
-    expect(result.nextCursor).toBe("cursor-2");
-  });
-
-  it("returns empty items when vendor reports no data", async () => {
-    process.env.ETHERSCAN_API_KEY = "shared-key";
-
-    fetchMock.mockResolvedValue({
-      ok: true,
-      status: 200,
-      headers: new Headers(),
-      json: async () => ({
-        status: "0",
-        message: "No data found",
-      }),
-    } as unknown as Response);
-
-    const { getTokenHolders } = await import("../services/tokenService");
-
-    const result = await getTokenHolders({
-      chainId: 1,
-      address: "0xabc",
-      cursor: null,
-      limit: 10,
-    });
-
+    expect(result.status).toBe("indexing");
     expect(result.items).toEqual([]);
     expect(result.nextCursor).toBeUndefined();
   });
 
-  it("tries alternate holders paths when the primary returns 404", async () => {
-    process.env.ETHERSCAN_API_KEY = "shared-key";
+  it("returns holders ordered by balance and paginates with cursor", async () => {
+    mockPool.setCursor({
+      chainId: 1,
+      token: "0x0000000000000000000000000000000000000abc",
+      fromBlock: "101",
+      toBlock: "200",
+    });
 
-    fetchMock
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        headers: new Headers(),
-        json: async () => ({
-          status: "0",
-          message: "not found",
-        }),
-      } as unknown as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        headers: new Headers(),
-        json: async () => ({
-          status: "1",
-          message: "OK",
-          data: {
-            items: [
-              {
-                TokenHolderAddress: "0xholder",
-                TokenHolderQuantity: "123",
-                TokenHolderPercentage: "12",
-              },
-            ],
-          },
-        }),
-      } as unknown as Response);
+    mockPool.setHolders([
+      {
+        chainId: 1,
+        token: "0x0000000000000000000000000000000000000abc",
+        holder: "0x0000000000000000000000000000000000000011",
+        balance: "500",
+      },
+      {
+        chainId: 1,
+        token: "0x0000000000000000000000000000000000000abc",
+        holder: "0x0000000000000000000000000000000000000022",
+        balance: "750",
+      },
+      {
+        chainId: 1,
+        token: "0x0000000000000000000000000000000000000abc",
+        holder: "0x0000000000000000000000000000000000000033",
+        balance: "250",
+      },
+    ]);
 
     const { getTokenHolders } = await import("../services/tokenService");
 
-    const result = await getTokenHolders({
-      chainId: 137,
-      address: "0xabc",
+    const first = await getTokenHolders({
+      chainId: 1,
+      address: "0x0000000000000000000000000000000000000abc",
       cursor: null,
-      limit: 10,
+      limit: 2,
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const firstUrl = new URL(fetchMock.mock.calls[0]?.[0] as string);
-    const secondUrl = new URL(fetchMock.mock.calls[1]?.[0] as string);
-
-    expect(firstUrl.pathname).toBe("/api/v2/token/holders");
-    expect(secondUrl.pathname).toBe("/api/v2/token/holderlist");
-    expect(result.items).toEqual([
-      { rank: 1, holder: "0xholder", balance: "123", pct: 12 },
+    expect(first.status).toBe("ok");
+    expect(first.items.map((item) => item.holder)).toEqual([
+      "0x0000000000000000000000000000000000000022",
+      "0x0000000000000000000000000000000000000011",
     ]);
+    expect(first.nextCursor).toBeDefined();
+
+    const second = await getTokenHolders({
+      chainId: 1,
+      address: "0x0000000000000000000000000000000000000abc",
+      cursor: first.nextCursor ?? undefined,
+      limit: 2,
+    });
+
+    expect(second.items).toHaveLength(1);
+    expect(second.items[0]?.holder).toBe("0x0000000000000000000000000000000000000033");
+    expect(second.status).toBe("ok");
+    expect(second.nextCursor).toBeUndefined();
   });
 
-  it("surfaces upstream errors when all holders paths fail", async () => {
-    process.env.ETHERSCAN_API_KEY = "shared-key";
-
-    fetchMock.mockResolvedValue({
-      ok: false,
-      status: 404,
-      headers: new Headers(),
-      json: async () => ({
-        status: "0",
-        message: "missing",
-      }),
-    } as unknown as Response);
-
-    const { getTokenHolders, EtherscanUpstreamError } = await import(
-      "../services/tokenService"
-    );
-
-    await expect(
-      getTokenHolders({
-        chainId: 137,
-        address: "0xabc",
-        cursor: null,
-        limit: 10,
-      }),
-    ).rejects.toBeInstanceOf(EtherscanUpstreamError);
-
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("rejects Cronos requests with an UnsupportedChainError", async () => {
+  it("rejects unsupported chains", async () => {
     const { getTokenHolders, UnsupportedChainError } = await import("../services/tokenService");
 
     await expect(
       getTokenHolders({ chainId: 25, address: "0xabc", cursor: null, limit: 10 }),
     ).rejects.toBeInstanceOf(UnsupportedChainError);
-
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("serves cached results on subsequent requests", async () => {
-    process.env.ETHERSCAN_API_KEY = "shared-key";
-
-    fetchMock.mockResolvedValue({
-      ok: true,
-      status: 200,
-      headers: new Headers(),
-      json: async () => ({
-        status: "1",
-        message: "OK",
-        result: [
-          {
-            TokenHolderAddress: "0xholder1",
-            TokenHolderQuantity: "5000",
-            TokenHolderRank: "1",
-            TokenHolderPercentage: "50.12",
-          },
-        ],
-      }),
-    } as unknown as Response);
-
-    const { getTokenHolders } = await import("../services/tokenService");
-
-    const first = await getTokenHolders({
-      chainId: 137,
-      address: "0xabc",
-      cursor: null,
-      limit: 25,
-    });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(redisClientMock.set).toHaveBeenCalled();
-
-    fetchMock.mockClear();
-
-    const second = await getTokenHolders({
-      chainId: 137,
-      address: "0xabc",
-      cursor: null,
-      limit: 25,
-    });
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(second).toEqual(first);
-    expect(redisClientMock.get).toHaveBeenCalledTimes(2);
   });
 });

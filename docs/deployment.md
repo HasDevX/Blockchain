@@ -40,6 +40,16 @@ DATABASE_URL=postgresql://explorer:change-me@db-host:5432/explorer
 REDIS_URL=redis://cache-host:6379
 FRONTEND_URL=https://explorer.yourdomain.com
 ETHERSCAN_API_KEY=
+# Public RPC defaults – replace with private endpoints in production
+RPC_1=https://cloudflare-eth.com
+RPC_10=https://mainnet.optimism.io
+RPC_56=https://bsc-dataseed.binance.org
+RPC_137=https://polygon-rpc.com
+RPC_42161=https://arb1.arbitrum.io/rpc
+RPC_43114=https://api.avax.network/ext/bc/C/rpc
+RPC_8453=https://mainnet.base.org
+RPC_324=https://mainnet.era.zksync.io
+RPC_5000=https://rpc.mantle.xyz
 EOF
 ```
 
@@ -62,9 +72,12 @@ Copy the unit file and enable it:
 
 ```bash
 sudo cp /srv/explorertoken/ops/systemd/explorertoken-backend.service /etc/systemd/system/
+sudo cp /srv/explorertoken/ops/systemd/explorertoken-holders-indexer.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable explorertoken-backend.service
 sudo systemctl start explorertoken-backend.service
+sudo systemctl enable explorertoken-holders-indexer.service
+sudo systemctl start explorertoken-holders-indexer.service
 ```
 
 ## 7. Configure Nginx

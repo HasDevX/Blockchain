@@ -25,6 +25,7 @@ Restart only what you need:
 
 ```bash
 sudo systemctl restart explorertoken-backend      # Node API
+sudo systemctl restart explorertoken-holders-indexer  # Holders RPC indexer
 sudo systemctl reload nginx                       # picks up config/asset changes
 ```
 
@@ -34,6 +35,57 @@ Verify status after restart:
 sudo systemctl status explorertoken-backend --no-pager
 sudo journalctl -u explorertoken-backend -n 40 --no-pager
 ```
+
+---
+
+## Token holders indexer
+
+The holders indexer walks ERC-20 transfers in small batches per token/chain. A lightweight scheduler now triggers a single pass across all tracked tokens, waits `HOLDERS_INDEXER_STEP_MS` between productive batches, and slows down to `HOLDERS_INDEXER_IDLE_MS` when everything is caught up.
+
+### Add or reindex a token
+
+1. Authenticate as an admin (same credentials as the dashboard).
+2. Call the reindex endpoint; provide the chain ID, token address, and the block you want to start from. Example:
+
+    ```bash
+    curl -X POST https://explorertoken.haswork.dev/api/admin/reindex \
+       -H "Content-Type: application/json" \
+       -u admin@example.com:changeme \
+       -d '{
+          "chainId": 1,
+          "token": "0x0000000000000000000000000000000000000000",
+          "fromBlock": "18000000"
+       }'
+    ```
+
+    A `202` response means the token is queued. The scheduler will pick it up on the next tick and process `HOLDERS_INDEXER_CHUNK` blocks at a time until the cursor advances past `latestBlock`.
+
+### Tune batch size & cadence
+
+- `HOLDERS_INDEXER_CHUNK` – number of blocks fetched per batch (defaults to 5,000). Lower it if RPCs time out or rate-limit; raise gently for faster catch-up.
+- `HOLDERS_INDEXER_STEP_MS` – delay (ms) before the scheduler immediately retries after doing work. Set to ~500–1000 ms to keep backfills moving without hammering RPCs.
+- `HOLDERS_INDEXER_IDLE_MS` – delay (ms) when no work was found. Increase to reduce idle polling on quiet networks.
+- `HOLDERS_INDEXER_ONCE=true` runs a single pass (useful for smoke tests or cron-driven jobs).
+
+Apply changes by updating `/etc/systemd/system/explorertoken-holders-indexer.service` environment overrides or the `.env` file, then reload the unit:
+
+```bash
+sudo systemctl restart explorertoken-holders-indexer
+```
+
+### Monitor progress
+
+- Tail the dedicated service:
+
+   ```bash
+   sudo journalctl -u explorertoken-holders-indexer -f
+   ```
+
+- Each batch emits two structured lines:
+   - `{"event":"holders.indexer.progress", ...}` – includes chain, token, block range, and transfer count.
+   - `metric holders_batch chain_id=... token=... from_block=... to_block=... transfers=...` – ready for Prometheus-style log scraping.
+- Rate-limit and error events show up as `holders.indexer.rate_limit` and `holders.indexer.error`. Investigate spikes by checking RPC quotas and network health.
+- A graceful shutdown logs `{"event":"holders.indexer.stop","reason":"sigterm"}`. Anything else suggests the process crashed—review `journalctl` and restart.
 
 ---
 

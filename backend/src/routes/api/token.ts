@@ -1,10 +1,6 @@
 import { Request, Response, Router } from "express";
 import { getChainById } from "../../config/chains";
-import {
-  EtherscanUpstreamError,
-  getTokenHolders,
-  UnsupportedChainError,
-} from "../../services/tokenService";
+import { getTokenHolders, UnsupportedChainError } from "../../services/tokenService";
 
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
@@ -98,13 +94,11 @@ export function createTokenRouter() {
         limit,
       });
 
-      const payload: { items: typeof holders.items; nextCursor?: string } = {
+      const payload: { items: typeof holders.items; nextCursor: string | null; status: string } = {
         items: holders.items,
+        nextCursor: holders.nextCursor ?? null,
+        status: holders.status,
       };
-
-      if (holders.nextCursor) {
-        payload.nextCursor = holders.nextCursor;
-      }
 
       res.json(payload);
     } catch (error: unknown) {
@@ -113,46 +107,8 @@ export function createTokenRouter() {
         return;
       }
 
-      if (error instanceof EtherscanUpstreamError) {
-        const upstream = error;
-        console.error(
-          JSON.stringify({
-            event: "holders.vendor.error",
-            vendor: "etherscan",
-            chainId: upstream.chainId,
-            host: upstream.host,
-            httpStatus: upstream.httpStatus,
-            vendorStatus: upstream.vendorStatus,
-            vendorMessage: upstream.vendorMessage,
-            retryAfterSeconds: upstream.retryAfterSeconds ?? null,
-          }),
-        );
-
-        if (upstream.httpStatus === 429) {
-          if (typeof upstream.retryAfterSeconds === "number") {
-            res.setHeader("Retry-After", String(upstream.retryAfterSeconds));
-          }
-
-          res.status(429).json({
-            error: "rate_limited",
-            vendor: "etherscan",
-            status: upstream.vendorStatus ?? null,
-            message: upstream.vendorMessage ?? null,
-          });
-          return;
-        }
-
-        res.status(502).json({
-          error: "upstream_error",
-          vendor: "etherscan",
-          status: upstream.vendorStatus ?? null,
-          message: upstream.vendorMessage ?? null,
-        });
-        return;
-      }
-
       console.error("Failed to load token holders", error);
-      res.status(502).json({ error: "upstream_error", vendor: "unknown" });
+      res.status(500).json({ error: "holders_unavailable" });
     }
   });
 

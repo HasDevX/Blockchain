@@ -1,0 +1,236 @@
+import { getPool, withTransaction } from "../lib/db";
+import { getRpcUrl } from "../config/rpc";
+import { RpcClient, RpcRateLimitError } from "../lib/rpcClient";
+import {
+  aggregateTransferDeltas,
+  applyHolderDeltas,
+  decodeTransferLogs,
+  normalizeAddress,
+  TRANSFER_TOPIC,
+  type RpcLog,
+} from "../services/holderStore";
+import {
+  listTrackedTokens,
+  updateTokenCursor,
+  type TokenCursor,
+} from "../services/tokenHolderRepository";
+
+const DEFAULT_BLOCK_CHUNK = BigInt(process.env.HOLDERS_INDEXER_CHUNK ?? "5000");
+const IDLE_SLEEP_MS = Number(process.env.HOLDERS_INDEXER_IDLE_MS ?? "5000");
+const STEP_INTERVAL_MS = Number(process.env.HOLDERS_INDEXER_STEP_MS ?? "1000");
+const RETRY_BASE_MS = 1_500;
+
+interface IndexStats {
+  chainId: number;
+  token: string;
+  fromBlock: bigint;
+  toBlock: bigint;
+  count: number;
+}
+
+async function sleep(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function computeStartBlock(cursor: TokenCursor): bigint | null {
+  if (cursor.fromBlock !== null) {
+    return cursor.fromBlock;
+  }
+
+  if (cursor.toBlock !== null) {
+    return cursor.toBlock + 1n;
+  }
+
+  return null;
+}
+
+async function processCursor(cursor: TokenCursor): Promise<boolean> {
+  const startBlock = computeStartBlock(cursor);
+
+  if (startBlock === null) {
+    return false;
+  }
+
+  const rpcUrl = getRpcUrl(cursor.chainId);
+  const rpcClient = new RpcClient(rpcUrl);
+
+  const latestBlock = await rpcClient.getBlockNumber();
+
+  if (latestBlock < startBlock) {
+    return false;
+  }
+
+  const chunkSize = DEFAULT_BLOCK_CHUNK > 0n ? DEFAULT_BLOCK_CHUNK : 5_000n;
+  const chunkEnd = startBlock + chunkSize - 1n;
+  const toBlock = chunkEnd > latestBlock ? latestBlock : chunkEnd;
+
+  if (toBlock < startBlock) {
+    return false;
+  }
+
+  const normalizedToken = normalizeAddress(cursor.token);
+  const rawLogs = (await rpcClient.getLogs({
+    fromBlock: startBlock,
+    toBlock,
+    address: normalizedToken,
+    topics: [TRANSFER_TOPIC],
+  })) as RpcLog[];
+
+  const transfers = decodeTransferLogs(rawLogs);
+  const deltas = aggregateTransferDeltas(transfers);
+
+  await withTransaction(async (client) => {
+    await applyHolderDeltas(client, cursor.chainId, normalizedToken, deltas);
+
+    const nextFromBlock = toBlock + 1n;
+    await updateTokenCursor(client, cursor.chainId, normalizedToken, nextFromBlock, toBlock);
+  });
+
+  reportProgress({
+    chainId: cursor.chainId,
+    token: normalizedToken,
+    fromBlock: startBlock,
+    toBlock,
+    count: transfers.length,
+  });
+
+  return true;
+}
+
+function reportProgress(stats: IndexStats) {
+  console.log(
+    JSON.stringify({
+      event: "holders.indexer.progress",
+      chainId: stats.chainId,
+      token: stats.token,
+      fromBlock: stats.fromBlock.toString(),
+      toBlock: stats.toBlock.toString(),
+      count: stats.count,
+    }),
+  );
+
+  console.log(
+    `metric holders_batch chain_id=${stats.chainId} token=${stats.token} from_block=${stats.fromBlock.toString()} to_block=${stats.toBlock.toString()} transfers=${stats.count}`,
+  );
+}
+
+function reportRateLimit(cursor: TokenCursor, delay: number, error: Error) {
+  console.warn(
+    JSON.stringify({
+      event: "holders.indexer.rate_limit",
+      chainId: cursor.chainId,
+      token: normalizeAddress(cursor.token),
+      delayMs: delay,
+      message: error.message,
+    }),
+  );
+}
+
+function reportError(cursor: TokenCursor, error: Error) {
+  console.error(
+    JSON.stringify({
+      event: "holders.indexer.error",
+      chainId: cursor.chainId,
+      token: normalizeAddress(cursor.token),
+      message: error.message,
+    }),
+  );
+}
+
+async function runOnce(): Promise<boolean> {
+  const pool = getPool();
+  const cursors = await listTrackedTokens(pool);
+  let didWork = false;
+
+  for (const cursor of cursors) {
+    try {
+      const processed = await processCursor(cursor);
+      didWork = didWork || processed;
+    } catch (error) {
+      if (error instanceof RpcRateLimitError) {
+        const delay = Math.max(error.retryAfterMs, RETRY_BASE_MS);
+        reportRateLimit(cursor, delay, error);
+        await sleep(delay);
+        continue;
+      }
+
+      reportError(cursor, error as Error);
+      await sleep(RETRY_BASE_MS);
+    }
+  }
+
+  return didWork;
+}
+
+const runOnceOnly = process.env.HOLDERS_INDEXER_ONCE === "true";
+
+let timer: NodeJS.Timeout | null = null;
+let isTickRunning = false;
+
+function scheduleNext(delay: number) {
+  if (runOnceOnly) {
+    return;
+  }
+
+  if (timer) {
+    clearTimeout(timer);
+  }
+
+  const normalizedDelay = Number.isFinite(delay) && delay > 0 ? delay : IDLE_SLEEP_MS;
+
+  timer = setTimeout(() => {
+    void tick();
+  }, normalizedDelay);
+}
+
+async function tick() {
+  if (isTickRunning) {
+    return;
+  }
+
+  isTickRunning = true;
+
+  try {
+    const didWork = await runOnce();
+
+    if (!runOnceOnly) {
+      const nextDelay = didWork ? STEP_INTERVAL_MS : IDLE_SLEEP_MS;
+      scheduleNext(nextDelay);
+    }
+  } catch (error) {
+    console.error("holders indexer tick failed", error);
+    if (!runOnceOnly) {
+      scheduleNext(IDLE_SLEEP_MS);
+    }
+  } finally {
+    isTickRunning = false;
+  }
+}
+
+function stopScheduler(reason: string) {
+  if (timer) {
+    clearTimeout(timer);
+    timer = null;
+  }
+
+  console.log(JSON.stringify({ event: "holders.indexer.stop", reason }));
+}
+
+async function startScheduler() {
+  await tick();
+}
+
+startScheduler().catch((error) => {
+  console.error("holders indexer failed", error);
+  process.exit(1);
+});
+
+process.on("SIGINT", () => {
+  stopScheduler("sigint");
+  process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+  stopScheduler("sigterm");
+  process.exit(0);
+});

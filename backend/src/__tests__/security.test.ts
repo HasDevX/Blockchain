@@ -12,6 +12,7 @@ beforeAll(async () => {
   process.env.NODE_ENV = "test";
   process.env.FRONTEND_URL = "http://localhost:5173";
   process.env.REDIS_URL = "";
+  process.env.DATABASE_URL = "postgresql://user:pass@localhost:5432/test";
   process.env.GIT_SHA = RAW_GIT_SHA;
   app = await createApp();
 });

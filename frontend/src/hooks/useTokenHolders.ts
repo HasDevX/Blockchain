@@ -14,6 +14,7 @@ export function useTokenHolders(chainId: number | null, address: string | null, 
     () => fetchTokenHolders(chainId as number, address as string, options),
     {
       keepPreviousData: true,
+      refreshInterval: (data) => (data?.status === "indexing" ? 5000 : 0),
       onError: (error: unknown) => {
         console.error(error);
         if (error instanceof ApiError && error.status === 429) {
