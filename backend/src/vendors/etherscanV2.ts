@@ -168,6 +168,7 @@ export class EtherscanV2Client {
     const host = getHostForChain(chainId);
     const apiKey = getApiKeyForChain(chainId);
     const url = createRequestUrl(host, chainId, address, page, limit);
+    const path = `${url.pathname}${url.search}`;
 
     const headers: Record<string, string> = {
       Accept: "application/json",
@@ -176,6 +177,15 @@ export class EtherscanV2Client {
     if (apiKey) {
       headers["X-API-Key"] = apiKey;
     }
+
+    console.debug(
+      JSON.stringify({
+        event: "holders.vendor.request",
+        host,
+        path,
+        chainId,
+      }),
+    );
 
     let response: Response;
 
@@ -210,6 +220,25 @@ export class EtherscanV2Client {
     const vendorStatus = payload?.status;
     const vendorMessage = extractVendorMessage(payload);
     const retryAfterHeader = getRetryAfterHeaderValue(response.headers);
+
+    if (response.status === 404) {
+      console.error(
+        JSON.stringify({
+          event: "holders.vendor.error",
+          host,
+          chainId,
+          httpStatus: 404,
+        }),
+      );
+
+      throw new EtherscanUpstreamError({
+        chainId,
+        host,
+        httpStatus: 404,
+        vendorStatus,
+        vendorMessage: "not_found",
+      });
+    }
 
     if (response.status === 429) {
       const retryAfterSeconds = parseRetryAfterHeader(retryAfterHeader);
