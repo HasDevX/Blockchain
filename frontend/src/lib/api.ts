@@ -6,6 +6,7 @@ import type {
   TokenSummary,
 } from "../types/api";
 import { API_BASE_URL } from "./config";
+import { mergeChainMetadata } from "./chainMetadata";
 
 export class ApiError extends Error {
   status: number;
@@ -19,7 +20,8 @@ export class ApiError extends Error {
   }
 }
 
-type ChainResponse = { chains: Chain[] } | Chain[];
+type ChainPayload = Partial<Chain> & { id: number };
+type ChainResponse = { chains: ChainPayload[] } | ChainPayload[];
 
 type RequestOptions = RequestInit & { token?: string };
 
@@ -55,15 +57,17 @@ async function fetchJson<T>(pathname: string, options: RequestOptions = {}): Pro
 }
 
 function normalizeChains(payload: ChainResponse): Chain[] {
+  let rawList: ChainPayload[] = [];
+
   if (Array.isArray(payload)) {
-    return payload as Chain[];
+    rawList = payload;
+  } else if (Array.isArray(payload.chains)) {
+    rawList = payload.chains;
   }
 
-  if (Array.isArray((payload as { chains?: Chain[] }).chains)) {
-    return (payload as { chains: Chain[] }).chains;
-  }
-
-  return [];
+  return rawList
+    .filter((chain): chain is ChainPayload => Boolean(chain && typeof chain.id === "number"))
+    .map((chain) => mergeChainMetadata(chain));
 }
 
 export async function fetchChains(): Promise<Chain[]> {

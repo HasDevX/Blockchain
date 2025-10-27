@@ -111,7 +111,7 @@ export function DashboardPage({
           <div className="flex flex-col gap-2">
             <h1 className="text-2xl font-semibold text-slate-100">Explorer dashboard</h1>
             <p className="text-sm text-slate-400">
-              {supportedCount} supported networks are live. Cronos (CRO) appears for visibility but stays disabled until compliance clears.
+              {supportedCount} supported networks are live. Cronos (25) appears for visibility but stays disabled until compliance clears.
             </p>
           </div>
           <div className="mt-5">
