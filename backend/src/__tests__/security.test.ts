@@ -17,6 +17,25 @@ describe("security middleware", () => {
     expect(response.status).toBe(401);
   });
 
+  it("returns configured chain list", async () => {
+    const response = await request(app).get("/api/chains");
+
+    expect(response.status).toBe(200);
+    expect(Array.isArray(response.body.chains)).toBe(true);
+    expect(response.body.chains).toHaveLength(10);
+
+    const cronos = response.body.chains.find((chain: { id: number }) => chain.id === 25);
+    expect(cronos).toBeDefined();
+    expect(cronos.supported).toBe(false);
+
+    const supportedIds = response.body.chains
+      .filter((chain: { supported: boolean }) => chain.supported)
+      .map((chain: { id: number }) => chain.id)
+      .sort((a: number, b: number) => a - b);
+
+    expect(supportedIds).toEqual([1, 10, 56, 137, 324, 42161, 43114, 5000, 8453].sort((a, b) => a - b));
+  });
+
   it("rate limits login endpoint after burst", async () => {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       await request(app)
