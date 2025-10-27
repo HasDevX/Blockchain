@@ -205,6 +205,87 @@ describe("getTokenHolders", () => {
     expect(result.nextCursor).toBeUndefined();
   });
 
+  it("tries alternate holders paths when the primary returns 404", async () => {
+    process.env.ETHERSCAN_API_KEY = "shared-key";
+
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        headers: new Headers(),
+        json: async () => ({
+          status: "0",
+          message: "not found",
+        }),
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: async () => ({
+          status: "1",
+          message: "OK",
+          data: {
+            items: [
+              {
+                TokenHolderAddress: "0xholder",
+                TokenHolderQuantity: "123",
+                TokenHolderPercentage: "12",
+              },
+            ],
+          },
+        }),
+      } as unknown as Response);
+
+    const { getTokenHolders } = await import("../services/tokenService");
+
+    const result = await getTokenHolders({
+      chainId: 137,
+      address: "0xabc",
+      cursor: null,
+      limit: 10,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstUrl = new URL(fetchMock.mock.calls[0]?.[0] as string);
+    const secondUrl = new URL(fetchMock.mock.calls[1]?.[0] as string);
+
+    expect(firstUrl.pathname).toBe("/api/v2/token/holders");
+    expect(secondUrl.pathname).toBe("/api/v2/token/holderlist");
+    expect(result.items).toEqual([
+      { rank: 1, holder: "0xholder", balance: "123", pct: 12 },
+    ]);
+  });
+
+  it("surfaces upstream errors when all holders paths fail", async () => {
+    process.env.ETHERSCAN_API_KEY = "shared-key";
+
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 404,
+      headers: new Headers(),
+      json: async () => ({
+        status: "0",
+        message: "missing",
+      }),
+    } as unknown as Response);
+
+    const { getTokenHolders, EtherscanUpstreamError } = await import(
+      "../services/tokenService"
+    );
+
+    await expect(
+      getTokenHolders({
+        chainId: 137,
+        address: "0xabc",
+        cursor: null,
+        limit: 10,
+      }),
+    ).rejects.toBeInstanceOf(EtherscanUpstreamError);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects Cronos requests with an UnsupportedChainError", async () => {
     const { getTokenHolders, UnsupportedChainError } = await import("../services/tokenService");
 

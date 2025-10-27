@@ -15,6 +15,22 @@ const CHAIN_HOSTS: Record<number, string> = {
 const MAX_RETRIES = 2;
 const DEFAULT_RETRY_AFTER_SECONDS = 1;
 
+interface HoldersRequestStrategy {
+  path: string;
+  limitParams: string[];
+}
+
+const HOLDER_PATH_STRATEGIES: readonly HoldersRequestStrategy[] = [
+  {
+    path: "/api/v2/token/holders",
+    limitParams: ["pagesize", "pageSize", "limit"],
+  },
+  {
+    path: "/api/v2/token/holderlist",
+    limitParams: ["pagesize", "pageSize", "offset", "limit"],
+  },
+];
+
 export interface EtherscanTokenHolderDto {
   TokenHolderAddress: string;
   TokenHolderQuantity: string;
@@ -124,27 +140,43 @@ interface HoldersRequest {
   query: string;
 }
 
-export function buildHoldersRequest({
+export function buildHoldersRequests({
   chainId,
   address,
   page,
   pageSize,
   sort,
-}: BuildHoldersRequestParams): HoldersRequest {
+}: BuildHoldersRequestParams): HoldersRequest[] {
   const host = getHostForChain(chainId);
   const lowercasedAddress = address.toLowerCase();
-  const params = new URLSearchParams({
+  const baseParams: Record<string, string> = {
     contractaddress: lowercasedAddress,
     page: String(page),
-    pagesize: String(pageSize),
     sort,
-  });
-
-  return {
-    host,
-    path: "/api/v2/token/holders",
-    query: params.toString(),
   };
+
+  return HOLDER_PATH_STRATEGIES.map((strategy) => {
+    const params = new URLSearchParams(baseParams);
+    for (const limitParam of strategy.limitParams) {
+      params.set(limitParam, String(pageSize));
+    }
+
+    return {
+      host,
+      path: strategy.path,
+      query: params.toString(),
+    };
+  });
+}
+
+export function buildHoldersRequest(params: BuildHoldersRequestParams): HoldersRequest {
+  const [first] = buildHoldersRequests(params);
+
+  if (!first) {
+    throw new Error("No holders request strategies configured");
+  }
+
+  return first;
 }
 
 async function fetchWithRetry(
@@ -183,7 +215,7 @@ export class EtherscanV2Client {
     page: number,
     limit: number,
   ): Promise<EtherscanVendorResult> {
-    const { host, path, query } = buildHoldersRequest({
+    const requests = buildHoldersRequests({
       chainId,
       address,
       page,
@@ -191,7 +223,6 @@ export class EtherscanV2Client {
       sort: "desc",
     });
     const apiKey = getApiKeyForChain(chainId);
-    const requestUrl = new URL(`https://${host}${path}?${query}`);
 
     const headers: Record<string, string> = {
       Accept: "application/json",
@@ -200,12 +231,57 @@ export class EtherscanV2Client {
     if (apiKey) {
       headers["X-API-Key"] = apiKey;
     }
+    let lastNotFoundError: EtherscanUpstreamError | undefined;
+
+    for (const [index, request] of requests.entries()) {
+      try {
+        return await this.executeTokenHoldersRequest(chainId, request, headers);
+      } catch (error) {
+        if (error instanceof EtherscanUpstreamError && error.httpStatus === 404) {
+          lastNotFoundError = error;
+          console.warn(
+            JSON.stringify({
+              event: "holders.vendor.fallback",
+              chainId,
+              host: request.host,
+              path: `${request.path}?${request.query}`,
+              attempt: index + 1,
+              totalStrategies: requests.length,
+            }),
+          );
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    if (lastNotFoundError) {
+      throw lastNotFoundError;
+    }
+
+    const fallbackHost = requests[0]?.host ?? getHostForChain(chainId);
+    throw new EtherscanUpstreamError({
+      chainId,
+      host: fallbackHost,
+      httpStatus: 404,
+      vendorMessage: "not_found",
+    });
+  }
+
+  private async executeTokenHoldersRequest(
+    chainId: number,
+    request: HoldersRequest,
+    headers: Record<string, string>,
+  ): Promise<EtherscanVendorResult> {
+    const requestUrl = new URL(`https://${request.host}${request.path}`);
+    requestUrl.search = request.query;
 
     console.debug(
       JSON.stringify({
         event: "holders.vendor.request",
-        host,
-        path: `${path}?${query}`,
+        host: request.host,
+        path: `${request.path}?${request.query}`,
         chainId,
       }),
     );
@@ -217,7 +293,7 @@ export class EtherscanV2Client {
     } catch (error) {
       throw new EtherscanUpstreamError({
         chainId,
-        host,
+        host: request.host,
         httpStatus: 0,
         vendorMessage: (error as Error)?.message ?? "request failed",
         cause: error,
@@ -232,7 +308,7 @@ export class EtherscanV2Client {
       if (response.ok) {
         throw new EtherscanUpstreamError({
           chainId,
-          host,
+          host: request.host,
           httpStatus: response.status,
           vendorMessage: "invalid_json",
           cause: error,
@@ -245,21 +321,12 @@ export class EtherscanV2Client {
     const retryAfterHeader = getRetryAfterHeaderValue(response.headers);
 
     if (response.status === 404) {
-      console.error(
-        JSON.stringify({
-          event: "holders.vendor.error",
-          host,
-          chainId,
-          httpStatus: 404,
-        }),
-      );
-
       throw new EtherscanUpstreamError({
         chainId,
-        host,
+        host: request.host,
         httpStatus: 404,
         vendorStatus,
-        vendorMessage: "not_found",
+        vendorMessage: vendorMessage ?? "not_found",
       });
     }
 
@@ -267,7 +334,7 @@ export class EtherscanV2Client {
       const retryAfterSeconds = parseRetryAfterHeader(retryAfterHeader);
       throw new EtherscanUpstreamError({
         chainId,
-        host,
+        host: request.host,
         httpStatus: 429,
         vendorStatus,
         vendorMessage: vendorMessage ?? "rate_limited",
@@ -278,7 +345,7 @@ export class EtherscanV2Client {
     if (response.status >= 400) {
       throw new EtherscanUpstreamError({
         chainId,
-        host,
+        host: request.host,
         httpStatus: response.status,
         vendorStatus,
         vendorMessage: vendorMessage ?? `http_error_${response.status}`,
@@ -288,14 +355,14 @@ export class EtherscanV2Client {
     if (!payload) {
       throw new EtherscanUpstreamError({
         chainId,
-        host,
+        host: request.host,
         httpStatus: response.status,
         vendorMessage: "empty_response",
       });
     }
 
     return {
-      host,
+      host: request.host,
       httpStatus: response.status,
       payload,
     };
