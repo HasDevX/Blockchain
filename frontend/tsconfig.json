@@ -5,7 +5,7 @@
     "moduleResolution": "bundler",
     "allowSyntheticDefaultImports": true,
     "noEmit": true,
-    "types": ["vite/client"]
+    "types": ["vite/client", "vitest", "@testing-library/jest-dom"]
   },
   "include": ["src"]
 }

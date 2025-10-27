@@ -5,7 +5,8 @@ import { TopNav } from "./components/TopNav";
 import { ChainPills } from "./components/ChainPills";
 import { DashboardPage } from "./pages/Dashboard";
 import { TokenPage } from "./pages/Token";
-import { AdminPage } from "./pages/Admin";
+import { AdminSettingsPage } from "./pages/AdminSettings";
+import { LoginPage } from "./pages/Login";
 import { useChains } from "./hooks/useChains";
 import type { Chain } from "./types/api";
 
@@ -93,7 +94,8 @@ function Shell() {
             }
           />
           <Route path="/token/:chainId/:address" element={<TokenPage />} />
-          <Route path="/admin" element={<AdminPage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/admin" element={<AdminSettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

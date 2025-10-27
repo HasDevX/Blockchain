@@ -109,9 +109,19 @@ export async function login(
   });
 }
 
-export async function fetchAdminSettings(token: string): Promise<AdminSettings> {
-  return fetchJson<AdminSettings>("/admin/settings", {
-    method: "GET",
-    token,
-  });
+export async function fetchAdminSettings(token?: string | null): Promise<AdminSettings> {
+  try {
+    return await fetchJson<AdminSettings>("/admin/settings", {
+      method: "GET",
+    });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401 && token) {
+      return fetchJson<AdminSettings>("/admin/settings", {
+        method: "GET",
+        token,
+      });
+    }
+
+    throw error;
+  }
 }
