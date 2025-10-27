@@ -3,9 +3,15 @@ import { getChainAdapter, type ChainAdapterConfig } from "../config/chainAdapter
 import { loadEnv } from "../config/env";
 import { getRedisClient } from "../lib/redisClient";
 import { EtherscanClient } from "../vendors/etherscanClient";
+import {
+  EtherscanV2Client,
+  type EtherscanTokenHolderDto,
+  type EtherscanTokenHolderResponse,
+} from "../vendors/etherscanV2";
 
 const env = loadEnv();
 const etherscanClient = new EtherscanClient(env.etherscanApiKey);
+const etherscanV2Client = new EtherscanV2Client();
 
 export interface TokenSummary {
   chainId: number;
@@ -48,8 +54,6 @@ export class UnsupportedChainError extends Error {
 const HOLDERS_CACHE_PREFIX = "holders";
 const CACHE_TTL_MIN_SECONDS = 30;
 const CACHE_TTL_MAX_SECONDS = 60;
-const MAX_VENDOR_RETRIES = 2;
-
 const chainRequestQueues = new Map<number, Promise<unknown>>();
 const chainNextAllowedAt = new Map<number, number>();
 
@@ -58,19 +62,6 @@ const redisClientPromise: Promise<Awaited<ReturnType<typeof getRedisClient>>> = 
 type Fetcher<T> = () => Promise<T>;
 
 type RedisClient = Exclude<Awaited<typeof redisClientPromise>, null>;
-
-interface EtherscanTokenHolderDto {
-  TokenHolderAddress: string;
-  TokenHolderQuantity: string;
-  TokenHolderRank?: string;
-  TokenHolderPercentage?: string;
-}
-
-interface EtherscanTokenHolderResponse {
-  status: string;
-  message: string;
-  result?: EtherscanTokenHolderDto[] | string;
-}
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -153,38 +144,6 @@ async function enforceRateBudget(adapter: ChainAdapterConfig) {
   chainNextAllowedAt.set(adapter.chainId, Date.now() + minIntervalMs);
 }
 
-async function fetchWithRetry(
-  adapter: ChainAdapterConfig,
-  url: URL,
-  attempt = 0,
-): Promise<Response> {
-  const response = await fetch(url, {
-    method: "GET",
-    headers: { Accept: "application/json" },
-  });
-
-  if ((response.status === 429 || response.status >= 500) && attempt < MAX_VENDOR_RETRIES) {
-    const backoff = 500 * (attempt + 1) + Math.floor(Math.random() * 300);
-    console.warn(
-      JSON.stringify({
-        event: "holders.vendor.retry",
-        chainId: adapter.chainId,
-        status: response.status,
-        attempt: attempt + 1,
-        backoffMs: backoff,
-      }),
-    );
-    await delay(backoff);
-    return fetchWithRetry(adapter, url, attempt + 1);
-  }
-
-  if (!response.ok) {
-    throw new Error(`Vendor request failed with status ${response.status}`);
-  }
-
-  return response;
-}
-
 function normalizeEtherscanPayload(
   dtoList: EtherscanTokenHolderDto[] | undefined,
   page: number,
@@ -213,47 +172,6 @@ function normalizeEtherscanPayload(
   };
 }
 
-async function requestEtherscanTokenHolders(
-  adapter: ChainAdapterConfig,
-  address: string,
-  page: number,
-  limit: number,
-): Promise<TokenHoldersResponse> {
-  const apiKey = process.env[adapter.apiKeyEnv];
-  const url = new URL(adapter.baseUrl);
-  const params = new URLSearchParams({
-    module: "token",
-    action: "tokenholderlist",
-    contractaddress: address,
-    page: String(page),
-    offset: String(limit),
-    sort: "desc",
-  });
-
-  if (apiKey) {
-    params.set("apikey", apiKey);
-  }
-
-  url.search = params.toString();
-
-  const response = await fetchWithRetry(adapter, url);
-  const body = (await response.json()) as EtherscanTokenHolderResponse;
-
-  if (body.status !== "1" && body.message?.toLowerCase().includes("no tokens found")) {
-    return { items: [] };
-  }
-
-  if (!Array.isArray(body.result)) {
-    if ((body.result as string | undefined)?.toLowerCase().includes("no records")) {
-      return { items: [] };
-    }
-
-    throw new Error(`Unexpected vendor payload: ${body.message ?? "unknown error"}`);
-  }
-
-  return normalizeEtherscanPayload(body.result, page, limit);
-}
-
 async function fetchTokenHoldersFromVendor(
   adapter: ChainAdapterConfig,
   address: string,
@@ -261,11 +179,39 @@ async function fetchTokenHoldersFromVendor(
   limit: number,
 ): Promise<TokenHoldersResponse> {
   switch (adapter.vendor) {
-    case "etherscan":
-      return requestEtherscanTokenHolders(adapter, address, page, limit);
+    case "etherscan": {
+      const response = await etherscanV2Client.getTokenHolders(
+        adapter.chainId,
+        address,
+        page,
+        limit,
+      );
+
+      return transformEtherscanResponse(response, page, limit);
+    }
     default:
       throw new Error(`Unsupported vendor ${adapter.vendor}`);
   }
+}
+
+function transformEtherscanResponse(
+  response: EtherscanTokenHolderResponse,
+  page: number,
+  limit: number,
+): TokenHoldersResponse {
+  if (response.status !== "1" && response.message?.toLowerCase().includes("no tokens found")) {
+    return { items: [] };
+  }
+
+  if (!Array.isArray(response.result)) {
+    if ((response.result as string | undefined)?.toLowerCase().includes("no records")) {
+      return { items: [] };
+    }
+
+    throw new Error(`Unexpected vendor payload: ${response.message ?? "unknown error"}`);
+  }
+
+  return normalizeEtherscanPayload(response.result, page, limit);
 }
 
 function buildCacheKey(chainId: number, address: string, cursor: number, limit: number): string {

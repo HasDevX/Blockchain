@@ -31,10 +31,12 @@ describe("getTokenHolders", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     delete process.env.POLYGONSCAN_API_KEY;
+    delete process.env.ETHERSCAN_API_KEY;
   });
 
   it("normalizes polygon holders using the etherscan adapter", async () => {
-    process.env.POLYGONSCAN_API_KEY = "polygon-test-key";
+    process.env.ETHERSCAN_API_KEY = "shared-key";
+    process.env.POLYGONSCAN_API_KEY = "polygon-override";
 
     fetchMock.mockResolvedValue({
       ok: true,
@@ -69,20 +71,64 @@ describe("getTokenHolders", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const requestUrl = fetchMock.mock.calls[0]?.[0] as URL;
+    const [urlArg, optionsArg] = fetchMock.mock.calls[0] ?? [];
+    const requestUrl = new URL(urlArg as string);
+    const headers = (optionsArg as RequestInit | undefined)?.headers as
+      | Record<string, string>
+      | undefined;
+
     expect(requestUrl.origin + requestUrl.pathname).toBe("https://api.polygonscan.com/api");
     expect(requestUrl.searchParams.get("contractaddress")).toBe(
       "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
     );
     expect(requestUrl.searchParams.get("page")).toBe("1");
     expect(requestUrl.searchParams.get("offset")).toBe("2");
-    expect(requestUrl.searchParams.get("apikey")).toBe("polygon-test-key");
+    expect(requestUrl.searchParams.has("apikey")).toBe(false);
+    expect(headers).toMatchObject({
+      Accept: "application/json",
+      "X-API-Key": "polygon-override",
+    });
 
     expect(result.items).toEqual([
       { rank: 1, holder: "0xholder1", balance: "5000", pct: 50.12 },
       { rank: 2, holder: "0xholder2", balance: "4000", pct: 40.01 },
     ]);
     expect(result.nextCursor).toBe("2");
+  });
+
+  it("falls back to shared etherscan key when no override exists", async () => {
+    process.env.ETHERSCAN_API_KEY = "shared-only-key";
+
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status: "1",
+        message: "OK",
+        result: [
+          {
+            TokenHolderAddress: "0xholder",
+            TokenHolderQuantity: "123",
+          },
+        ],
+      }),
+    } as unknown as Response);
+
+    const { getTokenHolders } = await import("../services/tokenService");
+
+    await getTokenHolders({
+      chainId: 1,
+      address: "0x123",
+      cursor: null,
+      limit: 25,
+    });
+
+    const [, optionsArg] = fetchMock.mock.calls[0] ?? [];
+    const headers = (optionsArg as RequestInit | undefined)?.headers as
+      | Record<string, string>
+      | undefined;
+
+    expect(headers).toMatchObject({ "X-API-Key": "shared-only-key" });
   });
 
   it("rejects Cronos requests with an UnsupportedChainError", async () => {
@@ -96,7 +142,7 @@ describe("getTokenHolders", () => {
   });
 
   it("serves cached results on subsequent requests", async () => {
-    process.env.POLYGONSCAN_API_KEY = "polygon-test-key";
+    process.env.ETHERSCAN_API_KEY = "shared-key";
 
     fetchMock.mockResolvedValue({
       ok: true,
