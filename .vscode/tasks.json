@@ -1,0 +1,56 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Backend: dev server",
+      "type": "shell",
+      "command": "npm run dev --workspace backend",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": [
+        {
+          "pattern": {
+            "regexp": "."
+          },
+          "background": {
+            "activeOnStart": true,
+            "beginsPattern": ".*Starting inspector.*",
+            "endsPattern": ".*Watching for file changes.*"
+          }
+        }
+      ]
+    },
+    {
+      "label": "Frontend: dev server",
+      "type": "shell",
+      "command": "npm run dev --workspace frontend",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": [
+        {
+          "pattern": {
+            "regexp": "."
+          },
+          "background": {
+            "activeOnStart": true,
+            "beginsPattern": ".*Local:\\s+http://",
+            "endsPattern": ".*ready in .*" 
+          }
+        }
+      ]
+    },
+    {
+      "label": "Backend: run migrations",
+      "type": "shell",
+      "command": "npm run migrate --workspace backend",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

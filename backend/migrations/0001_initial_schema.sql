@@ -1,0 +1,30 @@
+CREATE EXTENSION IF NOT EXISTS citext;
+
+CREATE TABLE IF NOT EXISTS admin_users (
+  id SERIAL PRIMARY KEY,
+  email CITEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value JSONB NOT NULL DEFAULT '{}'::JSONB,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS chain_settings (
+  chain_id INTEGER PRIMARY KEY,
+  vendor TEXT,
+  explorer_url TEXT,
+  supported BOOLEAN NOT NULL DEFAULT TRUE,
+  metadata JSONB,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS job_checkpoints (
+  chain_id INTEGER PRIMARY KEY,
+  last_block_scanned NUMERIC(78),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
