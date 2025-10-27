@@ -1,5 +1,4 @@
 import useSWR from "swr";
-import toast from "react-hot-toast";
 import { ApiError, fetchAdminSettings } from "../lib/api";
 import type { AdminSettings } from "../types/api";
 
@@ -13,8 +12,7 @@ export function useAdminSettings(token: string | null) {
           return;
         }
 
-        console.error(error);
-        toast.error("Unable to load admin settings");
+  console.error(error);
       },
     },
   );

@@ -73,7 +73,7 @@ describe("TokenPage", () => {
     expect(lastCall?.[1]).toBe("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd");
     expect(lastCall?.[2]).toMatchObject({ cursor: null, limit: 25 });
 
-    const holdersTab = screen.getByRole("button", { name: /holders/i });
+  const holdersTab = screen.getByRole("tab", { name: /holders/i });
     await act(async () => {
       await userEvent.click(holdersTab);
     });

@@ -4,11 +4,13 @@ import { useToken } from "../hooks/useToken";
 import { useTokenHolders } from "../hooks/useTokenHolders";
 import { Badge } from "../components/Badge";
 import { Copyable } from "../components/Copyable";
+import { Alert } from "../components/Alert";
 import { Skeleton } from "../components/Skeleton";
 import { StatCard } from "../components/StatCard";
 import { Table } from "../components/Table";
 import { Tabs } from "../components/Tabs";
 import { formatCompact, formatNumber, formatUsd } from "../lib/format";
+import { ApiError } from "../lib/api";
 import type { TokenHolder } from "../types/api";
 
 const TAB_OPTIONS = [
@@ -55,6 +57,23 @@ export function TokenPage() {
   }
 
   const holders = holdersQuery.data;
+  const holdersItems = holders?.items ?? [];
+  const isInitialLoading = holdersQuery.isLoading && !holders;
+  const isRefreshing = holdersQuery.isValidating && holdersItems.length > 0;
+  const holdersError = holdersQuery.error as ApiError | undefined;
+  const holdersAlert = holdersError
+    ? holdersError.status === 429
+      ? {
+          variant: "warning" as const,
+          title: "Rate limited",
+          message: "Too many requests. Try again in a moment.",
+        }
+      : {
+          variant: "error" as const,
+          title: "Unable to load holders",
+          message: "Something went wrong while fetching holders. Please retry shortly.",
+        }
+    : null;
 
   const hasNext = Boolean(holders?.nextCursor);
   const hasPrev = cursorHistory.length > 0;
@@ -106,7 +125,7 @@ export function TokenPage() {
           </div>
         </div>
         <div className="mt-6">
-          <Tabs value={tab} options={TAB_OPTIONS} onChange={setTab} />
+          <Tabs value={tab} options={TAB_OPTIONS} onChange={setTab} ariaLabel="Token sections" />
         </div>
       </section>
 
@@ -145,41 +164,56 @@ export function TokenPage() {
             <div className="text-xs text-slate-500">Page size {HOLDERS_PAGE_SIZE}</div>
           </div>
           <div className="mt-4">
-            {holdersQuery.isLoading && !holders ? (
-              <Skeleton className="h-48" />
-            ) : (
-              <Table<TokenHolder>
-                columns={[
-                  { key: "rank", header: "#", render: (row: TokenHolder) => row.rank, className: "w-12" },
-                  {
-                    key: "address",
-                    header: "Address",
-                    render: (row: TokenHolder) => (
-                      <Copyable value={row.address} display={`${row.address.slice(0, 10)}…`} />
-                    ),
-                  },
-                  {
-                    key: "balance",
-                    header: "Balance",
-                    render: (row: TokenHolder) => formatNumber(row.balance),
-                  },
-                  {
-                    key: "percentage",
-                    header: "%",
-                    render: (row: TokenHolder) => `${row.percentage.toFixed(2)}%`,
-                    className: "text-right",
-                  },
-                ]}
-                data={holders?.items ?? []}
-                emptyState="No holders indexed yet."
-              />
-            )}
+            {holdersAlert ? (
+              <Alert variant={holdersAlert.variant} title={holdersAlert.title} className="mb-3">
+                {holdersAlert.message}
+              </Alert>
+            ) : null}
+            <Table<TokenHolder>
+              columns={[
+                { key: "rank", header: "#", render: (row: TokenHolder) => row.rank, className: "w-14" },
+                {
+                  key: "address",
+                  header: "Address",
+                  render: (row: TokenHolder) => (
+                    <Copyable value={row.address} display={`${row.address.slice(0, 10)}…`} />
+                  ),
+                },
+                {
+                  key: "balance",
+                  header: "Balance",
+                  render: (row: TokenHolder) => formatNumber(row.balance),
+                },
+                {
+                  key: "percentage",
+                  header: "%",
+                  render: (row: TokenHolder) => `${row.percentage.toFixed(2)}%`,
+                  className: "text-right",
+                },
+              ]}
+              data={holdersItems}
+              emptyState="No holders indexed yet."
+              isLoading={isInitialLoading}
+              loadingState={
+                <span className="inline-flex items-center justify-center gap-2 text-slate-300">
+                  <span
+                    aria-hidden="true"
+                    className="h-3 w-3 animate-spin rounded-full border-2 border-primary-400 border-t-transparent"
+                  />
+                  Loading holders…
+                </span>
+              }
+              getRowKey={(row: TokenHolder) => `${row.address}-${row.rank}`}
+            />
           </div>
+          {isRefreshing ? (
+            <p className="mt-2 text-xs text-slate-500">Refreshing holders…</p>
+          ) : null}
           <div className="mt-4 flex items-center justify-between text-sm text-slate-400">
             <button
               type="button"
               onClick={resetPagination}
-              className="text-primary-300 hover:text-primary-100"
+              className="text-primary-300 hover:text-primary-100 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-400"
               disabled={!cursor && !cursorHistory.length}
             >
               Reset
@@ -187,16 +221,16 @@ export function TokenPage() {
             <div className="flex gap-2">
               <button
                 type="button"
-                className="rounded-full border border-slate-700/60 px-3 py-1 text-slate-300"
-                disabled={!hasPrev}
+                className="rounded-full border border-slate-700/60 px-3 py-1 text-slate-300 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-400"
+                disabled={isInitialLoading || !hasPrev}
                 onClick={goToPrevious}
               >
                 Prev
               </button>
               <button
                 type="button"
-                className="rounded-full border border-primary-500/50 px-3 py-1 text-primary-200 disabled:border-slate-700/60 disabled:text-slate-500"
-                disabled={!hasNext}
+                className="rounded-full border border-primary-500/50 px-3 py-1 text-primary-200 transition focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-400 disabled:border-slate-700/60 disabled:text-slate-500"
+                disabled={isInitialLoading || !hasNext}
                 onClick={goToNext}
               >
                 Next

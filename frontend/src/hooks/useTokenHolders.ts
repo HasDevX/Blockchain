@@ -1,6 +1,6 @@
 import useSWR from "swr";
 import toast from "react-hot-toast";
-import { fetchTokenHolders } from "../lib/api";
+import { ApiError, fetchTokenHolders } from "../lib/api";
 import type { TokenHoldersPayload } from "../types/api";
 
 interface Options {
@@ -16,6 +16,9 @@ export function useTokenHolders(chainId: number | null, address: string | null, 
       keepPreviousData: true,
       onError: (error: unknown) => {
         console.error(error);
+        if (error instanceof ApiError && error.status === 429) {
+          return;
+        }
         toast.error("Unable to load holders");
       },
     },
