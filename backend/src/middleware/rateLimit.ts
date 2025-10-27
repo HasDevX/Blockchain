@@ -17,67 +17,61 @@ function handleRateLimit(_request: RateLimitRequest, response: RateLimitResponse
 }
 
 type RedisClient = ReturnType<typeof createClient>;
-type RedisCommandArgs = Parameters<RedisClient["sendCommand"]>[0];
+let redisClient: RedisClient | null = null;
+let connectingPromise: Promise<RedisClient | null> | null = null;
+let fallbackWarned = false;
 
-let cachedClient: RedisClient | null = null;
-let clientPromise: Promise<RedisClient | null> | null = null;
-let missingUrlWarned = false;
-
-async function getLimiterRedisClient(redisUrl?: string): Promise<RedisClient | null> {
-  if (!redisUrl) {
-    if (!missingUrlWarned) {
-      console.warn("[redis] REDIS_URL not set; using in-memory rate limiter");
-      missingUrlWarned = true;
-    }
+async function getRedisClient(url?: string): Promise<RedisClient | null> {
+  if (!url) {
     return null;
   }
 
-  if (cachedClient) {
-    return cachedClient;
+  if (redisClient) {
+    return redisClient;
   }
 
-  if (!clientPromise) {
-    const client = createClient({ url: redisUrl });
+  if (!connectingPromise) {
+    const client = createClient({ url });
     client.on("error", (error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
-      console.warn("[redis] limiter error", message);
+      console.warn("[redis] limiter error:", message);
     });
 
-    clientPromise = client
+    connectingPromise = client
       .connect()
       .then(() => {
-        cachedClient = client;
+        console.info("[redis] connected to", url);
+        redisClient = client;
         return client;
       })
       .catch(async (error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
-        console.warn("[redis] limiter fallback to memory store", message);
+        console.warn("[redis] limiter connect failed:", message);
         await client.disconnect().catch(() => undefined);
         return null;
-      })
-      .finally(() => {
-        if (!cachedClient) {
-          clientPromise = null;
-        }
       });
   }
 
-  const resolved = await clientPromise;
-  if (!resolved) {
-    clientPromise = null;
-  }
-  return resolved;
+  const connected = await connectingPromise;
+  return connected;
 }
 
 async function createRedisStore(prefix: string, redisUrl?: string) {
-  const client = await getLimiterRedisClient(redisUrl);
+  const client = await getRedisClient(redisUrl);
+
   if (!client) {
+    if (!fallbackWarned) {
+      console.warn("[rate-limit] REDIS_URL not set; using in-memory limiter");
+      fallbackWarned = true;
+    }
     return undefined;
   }
 
+  type RedisSendCommandArg = Parameters<RedisClient["sendCommand"]>[0];
+
   return new RedisStore({
     prefix,
-    sendCommand: (args: string[]) => client.sendCommand(args as RedisCommandArgs),
+    sendCommand: (...args: string[]) => client.sendCommand(args as unknown as RedisSendCommandArg),
   });
 }
 

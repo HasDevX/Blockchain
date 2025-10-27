@@ -116,14 +116,14 @@ describe("createRateLimiters", () => {
     const env: AppEnv = { ...baseEnv, redisUrl: "redis://localhost:6379" };
     const { createRateLimiters } = await import("../middleware/rateLimit");
 
-  const limiters = await createRateLimiters(env);
+    const limiters = await createRateLimiters(env);
 
-  expect(createClientMock).toHaveBeenCalledTimes(1);
-  expect(RedisStoreMock).toHaveBeenCalledTimes(2);
-  expect(rateLimitFactoryMock).toHaveBeenCalledTimes(2);
+    expect(createClientMock).toHaveBeenCalledTimes(1);
+    expect(RedisStoreMock).toHaveBeenCalledTimes(2);
+    expect(rateLimitFactoryMock).toHaveBeenCalledTimes(2);
 
-  const loginHandler = limiters.loginLimiter as MockRateLimitHandler;
-  const adminHandler = limiters.adminLimiter as MockRateLimitHandler;
+    const loginHandler = limiters.loginLimiter as MockRateLimitHandler;
+    const adminHandler = limiters.adminLimiter as MockRateLimitHandler;
 
     expect(loginHandler.store).toBe(redisStoreInstances[0]);
     expect(adminHandler.store).toBe(redisStoreInstances[1]);
@@ -132,7 +132,7 @@ describe("createRateLimiters", () => {
     expect(typeof storeOptions.sendCommand).toBe("function");
     expect(storeOptions.prefix).toBe("rl:login");
 
-    expect(warnSpy).not.toHaveBeenCalledWith("[redis] REDIS_URL not set; using in-memory rate limiter");
+    expect(warnSpy).not.toHaveBeenCalledWith("[rate-limit] REDIS_URL not set; using in-memory limiter");
   });
 
   it("falls back to in-memory store when REDIS_URL is missing", async () => {
@@ -146,6 +146,21 @@ describe("createRateLimiters", () => {
 
     expect(createClientMock).not.toHaveBeenCalled();
     expect(RedisStoreMock).not.toHaveBeenCalled();
-    expect(warnSpy).toHaveBeenCalledWith("[redis] REDIS_URL not set; using in-memory rate limiter");
+    expect(warnSpy).toHaveBeenCalledWith("[rate-limit] REDIS_URL not set; using in-memory limiter");
+  });
+
+  it("falls back when Redis connection fails", async () => {
+    connectShouldSucceed = false;
+    const env: AppEnv = { ...baseEnv, redisUrl: "redis://localhost:6379" };
+    const { createRateLimiters } = await import("../middleware/rateLimit");
+
+    await expect(createRateLimiters(env)).resolves.toMatchObject({
+      loginLimiter: expect.any(Function),
+      adminLimiter: expect.any(Function),
+    });
+
+    expect(createClientMock).toHaveBeenCalledTimes(1);
+    expect(RedisStoreMock).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith("[rate-limit] REDIS_URL not set; using in-memory limiter");
   });
 });
