@@ -33,7 +33,7 @@ const chainMap: Record<number, Chain> = {
   56: {
     id: 56,
     key: "bsc",
-    name: "BNB Smart Chain",
+    name: "BSC",
     shortName: "BSC",
     nativeSymbol: "BNB",
     explorerUrl: "https://bscscan.com",
@@ -51,7 +51,7 @@ const chainMap: Record<number, Chain> = {
   324: {
     id: 324,
     key: "zkSync",
-    name: "zkSync Era",
+    name: "zkSync",
     shortName: "ZKS",
     nativeSymbol: "ETH",
     explorerUrl: "https://explorer.zksync.io",
@@ -78,7 +78,7 @@ const chainMap: Record<number, Chain> = {
   42161: {
     id: 42161,
     key: "arbitrum",
-    name: "Arbitrum",
+    name: "Arbitrum One",
     shortName: "ARB",
     nativeSymbol: "ETH",
     explorerUrl: "https://arbiscan.io",

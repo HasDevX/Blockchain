@@ -1,6 +1,10 @@
 import request from "supertest";
 import { describe, beforeAll, it, expect } from "vitest";
 import { createApp } from "../app";
+import { CHAINS } from "../config/chains";
+
+const RAW_GIT_SHA = "ABCDEF1234567890ABCDEF1234567890ABCDEF12";
+const EXPECTED_GIT_SHA = RAW_GIT_SHA.slice(0, 12).toLowerCase();
 
 let app: Awaited<ReturnType<typeof createApp>>;
 
@@ -8,6 +12,7 @@ beforeAll(async () => {
   process.env.NODE_ENV = "test";
   process.env.FRONTEND_URL = "http://localhost:5173";
   process.env.REDIS_URL = "";
+  process.env.GIT_SHA = RAW_GIT_SHA;
   app = await createApp();
 });
 
@@ -31,18 +36,7 @@ describe("security middleware", () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
-      chains: [
-        { id: 1, name: "Ethereum", supported: true },
-        { id: 10, name: "Optimism", supported: true },
-        { id: 56, name: "BSC", supported: true },
-        { id: 137, name: "Polygon", supported: true },
-        { id: 42161, name: "Arbitrum One", supported: true },
-        { id: 43114, name: "Avalanche C-Chain", supported: true },
-        { id: 8453, name: "Base", supported: true },
-        { id: 324, name: "zkSync", supported: true },
-        { id: 5000, name: "Mantle", supported: true },
-        { id: 25, name: "Cronos", supported: false },
-      ],
+      chains: CHAINS.map(({ id, name, supported }) => ({ id, name, supported })),
     });
   });
 
@@ -50,13 +44,15 @@ describe("security middleware", () => {
     const rootResponse = await request(app).get("/health");
     expect(rootResponse.status).toBe(200);
     expect(rootResponse.body.ok).toBe(true);
-    expect(rootResponse.body.version).toMatch(/^[0-9a-f]{7,12}$/);
+  expect(rootResponse.body.version).toMatch(/^[0-9a-f]{7,12}$/);
+  expect(rootResponse.body.version).toBe(EXPECTED_GIT_SHA);
     expect(typeof rootResponse.body.uptime).toBe("number");
 
     const apiResponse = await request(app).get("/api/health");
     expect(apiResponse.status).toBe(200);
     expect(apiResponse.body.ok).toBe(true);
-    expect(apiResponse.body.version).toMatch(/^[0-9a-f]{7,12}$/);
+  expect(apiResponse.body.version).toMatch(/^[0-9a-f]{7,12}$/);
+  expect(apiResponse.body.version).toBe(EXPECTED_GIT_SHA);
     expect(typeof apiResponse.body.uptime).toBe("number");
   });
 
