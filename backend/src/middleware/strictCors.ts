@@ -6,16 +6,13 @@ export function createStrictCors(env: AppEnv): RequestHandler {
   const allowedOrigins = new Set(env.frontendOrigins);
 
   const options: CorsOptions = {
-  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
       if (!origin) {
-        return callback(null, true);
+        callback(null, true);
+        return;
       }
 
-      if (allowedOrigins.has(origin)) {
-        return callback(null, true);
-      }
-
-      return callback(new Error("Not allowed by CORS"));
+      callback(null, allowedOrigins.has(origin));
     },
     credentials: true,
     allowedHeaders: [

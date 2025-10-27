@@ -16,8 +16,8 @@ export function getGitSha(): string {
       .toString()
       .trim();
   } catch (error) {
-    cachedGitSha = "unknown";
+    cachedGitSha = "dev";
   }
 
-  return cachedGitSha ?? "unknown";
+  return cachedGitSha ?? "dev";
 }

@@ -16,6 +16,8 @@ describe("security middleware", () => {
     const response = await request(app).head("/api/admin/settings");
     expect(response.status).toBe(401);
     expect(response.get("content-type")).toContain("application/json");
+    const expectedLength = Buffer.byteLength(JSON.stringify({ error: "unauthorized" }));
+    expect(Number(response.get("content-length"))).toBe(expectedLength);
   });
 
   it("rejects unauthenticated GET admin request with JSON body", async () => {
@@ -28,19 +30,29 @@ describe("security middleware", () => {
     const response = await request(app).get("/api/chains");
 
     expect(response.status).toBe(200);
-    expect(Array.isArray(response.body.chains)).toBe(true);
-    expect(response.body.chains).toHaveLength(10);
+    expect(response.body).toEqual({
+      chains: [
+        { id: 1, name: "Ethereum", supported: true },
+        { id: 10, name: "Optimism", supported: true },
+        { id: 56, name: "BSC", supported: true },
+        { id: 137, name: "Polygon", supported: true },
+        { id: 42161, name: "Arbitrum One", supported: true },
+        { id: 43114, name: "Avalanche C-Chain", supported: true },
+        { id: 8453, name: "Base", supported: true },
+        { id: 324, name: "zkSync", supported: true },
+        { id: 5000, name: "Mantle", supported: true },
+        { id: 25, name: "Cronos", supported: false },
+      ],
+    });
+  });
 
-    const cronos = response.body.chains.find((chain: { id: number }) => chain.id === 25);
-    expect(cronos).toBeDefined();
-    expect(cronos.supported).toBe(false);
+  it("exposes health endpoint", async () => {
+    const response = await request(app).get("/health");
 
-    const supportedIds = response.body.chains
-      .filter((chain: { supported: boolean }) => chain.supported)
-      .map((chain: { id: number }) => chain.id)
-      .sort((a: number, b: number) => a - b);
-
-    expect(supportedIds).toEqual([1, 10, 56, 137, 324, 42161, 43114, 5000, 8453].sort((a, b) => a - b));
+    expect(response.status).toBe(200);
+    expect(response.body.ok).toBe(true);
+    expect(typeof response.body.version).toBe("string");
+    expect(typeof response.body.uptime).toBe("number");
   });
 
   it("rate limits login endpoint after burst", async () => {
