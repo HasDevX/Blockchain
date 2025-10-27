@@ -1,8 +1,8 @@
 import { Request, Response } from "express";
 import rateLimitFactory, { RateLimitRequestHandler } from "express-rate-limit";
 import RedisStore from "rate-limit-redis";
+import { createClient } from "redis";
 import { AppEnv } from "../config/env";
-import { getRedisClient } from "../lib/redisClient";
 
 interface RateLimiterBundle {
   loginLimiter: RateLimitRequestHandler;
@@ -16,19 +16,74 @@ function handleRateLimit(_request: RateLimitRequest, response: RateLimitResponse
   response.status(429).json({ error: "rate_limited" });
 }
 
-export async function createRateLimiters(env: AppEnv): Promise<RateLimiterBundle> {
-  const redisClient = await getRedisClient(env);
+type RedisClient = ReturnType<typeof createClient>;
+type RedisCommandArgs = Parameters<RedisClient["sendCommand"]>[0];
 
-  const createStore = (prefix: string) => {
-    if (!redisClient) {
-      return undefined;
+let cachedClient: RedisClient | null = null;
+let clientPromise: Promise<RedisClient | null> | null = null;
+let missingUrlWarned = false;
+
+async function getLimiterRedisClient(redisUrl?: string): Promise<RedisClient | null> {
+  if (!redisUrl) {
+    if (!missingUrlWarned) {
+      console.warn("[redis] REDIS_URL not set; using in-memory rate limiter");
+      missingUrlWarned = true;
     }
+    return null;
+  }
 
-    return new RedisStore({
-      prefix,
-      sendCommand: (args: string[]) => redisClient.sendCommand(args as unknown as Parameters<typeof redisClient.sendCommand>[0]),
+  if (cachedClient) {
+    return cachedClient;
+  }
+
+  if (!clientPromise) {
+    const client = createClient({ url: redisUrl });
+    client.on("error", (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn("[redis] limiter error", message);
     });
-  };
+
+    clientPromise = client
+      .connect()
+      .then(() => {
+        cachedClient = client;
+        return client;
+      })
+      .catch(async (error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn("[redis] limiter fallback to memory store", message);
+        await client.disconnect().catch(() => undefined);
+        return null;
+      })
+      .finally(() => {
+        if (!cachedClient) {
+          clientPromise = null;
+        }
+      });
+  }
+
+  const resolved = await clientPromise;
+  if (!resolved) {
+    clientPromise = null;
+  }
+  return resolved;
+}
+
+async function createRedisStore(prefix: string, redisUrl?: string) {
+  const client = await getLimiterRedisClient(redisUrl);
+  if (!client) {
+    return undefined;
+  }
+
+  return new RedisStore({
+    prefix,
+    sendCommand: (args: string[]) => client.sendCommand(args as RedisCommandArgs),
+  });
+}
+
+export async function createRateLimiters(env: AppEnv): Promise<RateLimiterBundle> {
+  const loginStore = await createRedisStore("rl:login", env.redisUrl);
+  const adminStore = await createRedisStore("rl:admin", env.redisUrl);
 
   const baseConfig = {
     windowMs: 60 * 1000,
@@ -55,14 +110,14 @@ export async function createRateLimiters(env: AppEnv): Promise<RateLimiterBundle
     ...baseConfig,
     max: 5,
     keyGenerator: (req: RateLimitRequest) => getClientIp(req),
-    store: createStore("rl:login"),
+    store: loginStore,
   });
 
   const adminLimiter = rateLimitFactory({
     ...baseConfig,
     max: 60,
     keyGenerator: (req: RateLimitRequest) => getClientIp(req),
-    store: createStore("rl:admin"),
+    store: adminStore,
   });
 
   return {
