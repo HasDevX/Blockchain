@@ -190,6 +190,10 @@ describe("getTokenHolders", () => {
     vi.resetModules();
     mockPool.reset();
 
+    process.env.ADMIN_EMAIL = "admin@example.com";
+    process.env.ADMIN_PASSWORD = "password";
+    process.env.JWT_SECRET = "secret";
+
     vi.doMock("../lib/db", () => ({
       getPool: () => mockPool,
     }));

@@ -1,12 +1,18 @@
 import request from "supertest";
+import jwt, { JwtPayload } from "jsonwebtoken";
 import { describe, beforeAll, it, expect } from "vitest";
-import { createApp } from "../app";
 import { CHAINS } from "../config/chains";
 
 const RAW_GIT_SHA = "ABCDEF1234567890ABCDEF1234567890ABCDEF12";
 const EXPECTED_GIT_SHA = RAW_GIT_SHA.slice(0, 12).toLowerCase();
+const ADMIN_EMAIL = "admin@example.com";
+const ADMIN_PASSWORD = "super-secret";
+const JWT_SECRET = "test-secret-key";
 
-let app: Awaited<ReturnType<typeof createApp>>;
+type AppFactory = (typeof import("../app"))["createApp"];
+
+let createApp: AppFactory;
+let app: Awaited<ReturnType<AppFactory>>;
 
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
@@ -14,6 +20,10 @@ beforeAll(async () => {
   process.env.REDIS_URL = "";
   process.env.DATABASE_URL = "postgresql://user:pass@localhost:5432/test";
   process.env.GIT_SHA = RAW_GIT_SHA;
+  process.env.ADMIN_EMAIL = ADMIN_EMAIL;
+  process.env.ADMIN_PASSWORD = ADMIN_PASSWORD;
+  process.env.JWT_SECRET = JWT_SECRET;
+  ({ createApp } = await import("../app"));
   app = await createApp();
 });
 
@@ -30,6 +40,43 @@ describe("security middleware", () => {
     const response = await request(app).get("/api/admin/settings");
     expect(response.status).toBe(401);
     expect(response.body).toEqual({ error: "unauthorized" });
+  });
+
+  it("allows HEAD admin request with valid token", async () => {
+    const loginResponse = await request(app)
+      .post("/api/auth/login")
+      .send({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD });
+
+    expect(loginResponse.status).toBe(200);
+    expect(typeof loginResponse.body.token).toBe("string");
+
+    const response = await request(app)
+      .head("/api/admin/settings")
+      .set("authorization", `Bearer ${loginResponse.body.token}`);
+
+    expect(response.status).toBe(200);
+  });
+
+  it("logs in admin with correct credentials", async () => {
+    const response = await request(app)
+      .post("/api/auth/login")
+      .send({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toHaveProperty("token");
+
+    const payload = jwt.verify(response.body.token, JWT_SECRET) as JwtPayload;
+    expect(payload.sub).toBe("admin");
+    expect(payload.email).toBe(ADMIN_EMAIL);
+  });
+
+  it("rejects login with invalid credentials", async () => {
+    const response = await request(app)
+      .post("/api/auth/login")
+      .send({ email: ADMIN_EMAIL, password: "wrong-password" });
+
+    expect(response.status).toBe(401);
+    expect(response.body).toEqual({ error: "invalid_credentials" });
   });
 
   it("returns configured chain list", async () => {
@@ -61,12 +108,12 @@ describe("security middleware", () => {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       await request(app)
         .post("/api/auth/login")
-        .send({ email: "user@example.com", password: "password" });
+        .send({ email: ADMIN_EMAIL, password: "wrong-password" });
     }
 
     const limitedResponse = await request(app)
       .post("/api/auth/login")
-      .send({ email: "user@example.com", password: "password" });
+      .send({ email: ADMIN_EMAIL, password: "wrong-password" });
 
     expect(limitedResponse.status).toBe(429);
     expect(limitedResponse.body).toEqual({ error: "rate_limited" });

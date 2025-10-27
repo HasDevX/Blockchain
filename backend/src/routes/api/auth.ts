@@ -1,5 +1,7 @@
 import { Request, Response, Router } from "express";
 import { RateLimitRequestHandler } from "express-rate-limit";
+import jwt from "jsonwebtoken";
+import { loadEnv } from "../../config/env";
 
 interface LoginRequestBody {
   email?: string;
@@ -15,19 +17,22 @@ export function createAuthRouter(loginLimiter: RateLimitRequestHandler) {
     const password = body?.password;
 
     if (!email || !password) {
-      res.status(400).json({ error: "invalid_credentials" });
+      res.status(401).json({ error: "invalid_credentials" });
       return;
     }
 
-    const isAdmin = email.toLowerCase() === "admin@explorertoken.dev";
+    const env = loadEnv();
 
-    res.json({
-      token: isAdmin ? "admin-dev-token" : "user-dev-token",
-      user: {
-        email,
-        roles: isAdmin ? ["admin"] : ["user"],
-      },
+    if (email.toLowerCase() !== env.adminEmail || password !== env.adminPassword) {
+      res.status(401).json({ error: "invalid_credentials" });
+      return;
+    }
+
+    const token = jwt.sign({ sub: "admin", email: env.adminEmail }, env.jwtSecret, {
+      expiresIn: "12h",
     });
+
+    res.json({ token });
   });
 
   return router;

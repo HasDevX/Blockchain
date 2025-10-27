@@ -26,6 +26,9 @@ export interface AppEnv {
   frontendOrigins: string[];
   etherscanApiKey?: string;
   rpcUrls: Record<number, string>;
+  adminEmail: string;
+  adminPassword: string;
+  jwtSecret: string;
 }
 
 let cachedEnv: AppEnv | null = null;
@@ -35,7 +38,21 @@ export function loadEnv(): AppEnv {
     return cachedEnv;
   }
 
-  const { NODE_ENV, PORT, DATABASE_URL, REDIS_URL, FRONTEND_URL, ETHERSCAN_API_KEY } = process.env;
+  const {
+    NODE_ENV,
+    PORT,
+    DATABASE_URL,
+    REDIS_URL,
+    FRONTEND_URL,
+    ETHERSCAN_API_KEY,
+    ADMIN_EMAIL,
+    ADMIN_PASSWORD,
+    JWT_SECRET,
+  } = process.env;
+
+  const adminEmail = requireEnv("ADMIN_EMAIL", ADMIN_EMAIL).toLowerCase();
+  const adminPassword = requireEnv("ADMIN_PASSWORD", ADMIN_PASSWORD);
+  const jwtSecret = requireEnv("JWT_SECRET", JWT_SECRET);
 
   cachedEnv = {
     nodeEnv: NODE_ENV ?? "development",
@@ -45,6 +62,9 @@ export function loadEnv(): AppEnv {
     frontendOrigins: parseOrigins(FRONTEND_URL),
     etherscanApiKey: ETHERSCAN_API_KEY,
     rpcUrls: buildRpcUrlMap(),
+    adminEmail,
+    adminPassword,
+    jwtSecret,
   };
 
   return cachedEnv;
@@ -72,4 +92,12 @@ function buildRpcUrlMap(): Record<number, string> {
   }
 
   return map;
+}
+
+function requireEnv(name: string, value: NullableString): string {
+  if (!value || value.trim().length === 0) {
+    throw new Error(`${name} must be configured`);
+  }
+
+  return value.trim();
 }

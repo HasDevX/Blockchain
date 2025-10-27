@@ -92,6 +92,10 @@ describe("createRateLimiters", () => {
     redisUrl: undefined,
     frontendOrigins: ["http://localhost:5173"],
     etherscanApiKey: undefined,
+    rpcUrls: {},
+    adminEmail: "admin@example.com",
+    adminPassword: "password",
+    jwtSecret: "secret",
   };
 
   let warnSpy: ReturnType<typeof vi.spyOn>;
