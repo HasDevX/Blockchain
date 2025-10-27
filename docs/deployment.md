@@ -109,11 +109,30 @@ journalctl -u explorertoken-backend -f
 
 ## 9. Cloudflare hardening
 
-- Enable proxying for the production DNS record.
-- Lock down Nginx with an allow-list of Cloudflare IP ranges in `set_real_ip_from`.
-- Configure a firewall rule to rate-limit `/api/auth/login` if desired (stacked with backend rate limiters).
+1. **DNS**: Create `A` (and `AAAA` if IPv6 is available) records for the production hostname pointing at the origin. Keep the proxy toggle orange so Cloudflare sits in front of the server.
+2. **SSL/TLS ▸ Overview**: Set the mode to **Full**. This keeps end-to-end HTTPS without requiring origin certificates Cloudflare can validate.
+3. **SSL/TLS ▸ Edge Certificates**: Enable **Always Use HTTPS** and **Automatic HTTPS Rewrites**. Verify with `curl -I http://<host>` that a `301` upgrade is returned.
+4. **Network**: Toggle **HTTP/2** and **HTTP/3 (QUIC)** on to maximize client performance.
+5. **Security ▸ WAF**:
+   - Enable the Cloudflare Managed Ruleset.
+   - Add a custom rule that blocks HTTP methods other than `GET`, `POST`, or `OPTIONS` on `/api/*`.
+   - Add a rate limit rule (e.g. 1,000 requests per 5 minutes per IP) targeting `/api/*` that issues a Managed Challenge.
+6. **Firewall ▸ Tools**: Import the Cloudflare IP ranges into Nginx via `set_real_ip_from` and drop other inbound traffic at the origin security group if available.
 
-## 10. Rollback plan
+Document the applied rule IDs in the ops diary so future audits can confirm they remain enabled after configuration changes.
+
+## 10. Nightly backups
+
+Install the helper script and cron job for logical dumps:
+
+```bash
+sudo install -m 750 ops/scripts/nightly-backup.sh /usr/local/bin/explorertoken-nightly-backup
+echo '30 2 * * * explorertoken /usr/local/bin/explorertoken-nightly-backup' | sudo tee /etc/cron.d/explorertoken-backups
+```
+
+Ensure `/var/backups/explorertoken` is owned by `explorertoken` and that `/var/lib/explorertoken/.pgpass` stores the credentials (`chmod 600`). Adjust environment variables (`PGHOST`, `PGPORT`, `RETENTION_DAYS`, etc.) in the cron file if your topology differs. Refer to `docs/BACKUPS.md` for verification and restore drills.
+
+## 11. Rollback plan
 
 - Keep the previous build artefact zipped under `/srv/explorertoken/releases` (adjust deploy script if necessary).
 - Roll back by checking out the prior tag/commit and rerunning the deploy script.

@@ -37,13 +37,45 @@ sudo journalctl -u explorertoken-backend -n 40 --no-pager
 
 ---
 
+## Cloudflare & TLS
+
+Daily checks when the stack is fronted by Cloudflare:
+
+1. **DNS + proxying**: Confirm the `A` (and `AAAA` if IPv6 is enabled) record for `explorertoken.haswork.dev` points at the origin server and is proxied (orange cloud).
+2. **SSL/TLS mode**: Under Cloudflare ▸ SSL/TLS ▸ Overview, set the mode to **Full**. Avoid "Flexible"—it downgrades traffic to HTTP between Cloudflare and the origin.
+3. **Edge certificates**: In SSL/TLS ▸ Edge Certificates, keep **Always Use HTTPS** and **Automatic HTTPS Rewrites** enabled. Verify HTTP traffic is redirected:
+
+   ```bash
+   curl -I http://explorertoken.haswork.dev | head -n 1
+   ```
+
+   Expected: `HTTP/1.1 301 Moved Permanently` to the `https://` URL.
+
+4. **HTTP/2 + HTTP/3**: Enable both toggles under Network ▸ HTTP/2 and HTTP/3 (QUIC).
+5. **WAF rules**: In Security ▸ WAF ▸ Custom rules, apply the baseline protections for `/api/*`:
+   - Rule 1: Allow only `GET`, `POST`, and `OPTIONS` to `/api/*`; block other methods.
+   - Rule 2: Rate-limit bursts (example threshold 1,000 requests per 5 minutes per IP) with "Managed Challenge" to complement backend rate limiters.
+   - Enable the Cloudflare Managed Ruleset with the **API Shield** templates.
+6. **TLS health check**: From the origin host, confirm the certificate chain with:
+
+   ```bash
+   openssl s_client -connect explorertoken.haswork.dev:443 -servername explorertoken.haswork.dev -quiet <<<"QUIT"
+   ```
+
+   Ensure the certificate issuer matches the Cloudflare edge cert, expiry >14 days, and protocol reports TLS 1.2+.
+
+Escalate to the infra team if any toggle drifts or the HTTPS redirect stops working.
+
+---
+
 ## Backup & retention
 
-Daily database backups are controlled by `/etc/cron.d/explorertoken-backups` (see `docs/BACKUPS.md`). Dumps land in `/var/backups/explorertoken` as `YYYYMMDD_explorertoken.dump.gz` and the retention prune runs at 04:15, keeping the most recent 14 files. Validate the job:
+Nightly database backups are orchestrated by `/etc/cron.d/explorertoken-backups`, which calls `/usr/local/bin/explorertoken-nightly-backup` (see `docs/BACKUPS.md`). Dumps land in `/var/backups/explorertoken` as `YYYYMMDD_HHMMSS_explorertoken_db.dump.gz`, and the script prunes anything older than 14 days by default. Validate the job:
 
 ```bash
 sudo -u explorertoken ls -lh /var/backups/explorertoken | tail
-sudo -u explorertoken pg_restore --list /var/backups/explorertoken/$(date +"%Y%m%d")_explorertoken.dump.gz | head
+LATEST=$(sudo -u explorertoken ls -1t /var/backups/explorertoken/*_explorertoken_db.dump.gz | head -n1)
+sudo -u explorertoken pg_restore --list "$LATEST" | head
 ```
 
 Escalate to infra if the directory is empty for more than 24 hours.
@@ -56,7 +88,7 @@ Escalate to infra if the directory is empty for more than 24 hours.
 2. Copy the desired dump to `/tmp/restore.dump.gz` and decompress:
 
    ```bash
-   sudo -u explorertoken cp /var/backups/explorertoken/20251018_explorertoken.dump.gz /tmp/restore.dump.gz
+   sudo -u explorertoken cp /var/backups/explorertoken/20251018_021500_explorertoken_db.dump.gz /tmp/restore.dump.gz
    sudo -u explorertoken gunzip -f /tmp/restore.dump.gz
    ```
 
@@ -81,16 +113,16 @@ Record the restore in the ops log, including dump name and verification steps. M
 
 - Tail structured backend logs:
 
-   ```bash
-   sudo journalctl -u explorertoken-backend -f
-   ```
+  ```bash
+  sudo journalctl -u explorertoken-backend -f
+  ```
 
 - Inspect Nginx access & error logs:
 
-   ```bash
-   sudo tail -n 200 /var/log/nginx/access.log
-   sudo tail -n 200 /var/log/nginx/error.log
-   ```
+  ```bash
+  sudo tail -n 200 /var/log/nginx/access.log
+  sudo tail -n 200 /var/log/nginx/error.log
+  ```
 
 Archive logs with `journalctl -u explorertoken-backend --since "2025-01-01" --until now > backend.log` when handing over to engineering.
 

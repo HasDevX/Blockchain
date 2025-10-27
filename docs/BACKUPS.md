@@ -10,40 +10,42 @@ We schedule logical dumps with `pg_dump` so that every environment has portable 
 
 ### Cron job (daily full dump)
 
+Ship the helper script that wraps `pg_dump` and pruning logic:
+
+```bash
+sudo install -m 750 ops/scripts/nightly-backup.sh /usr/local/bin/explorertoken-nightly-backup
+```
+
+> The script relies on `.pgpass` for authentication (see below). Override the defaults with environment variables if the database host, port, or name differs.
+
 Create `/etc/cron.d/explorertoken-backups`:
 
 ```
 # m h dom mon dow user         command
-30 2 * * * explorertoken       /usr/local/bin/pg_dump \
-                                    --username="explorertoken" \
-                                    --host="127.0.0.1" \
-                                    --format=custom \
-                                    --file="/var/backups/explorertoken/$(date +\%Y\%m\%d)_explorertoken.dump" \
-                                    explorertoken_db && \
-                               /usr/bin/gzip -f /var/backups/explorertoken/$(date +\%Y\%m\%d)_explorertoken.dump
+30 2 * * * explorertoken PGDATABASE=explorertoken_db PGUSER=explorertoken /usr/local/bin/explorertoken-nightly-backup
 ```
 
 Key points:
 
 - Run after 02:00 local time to stay clear of traffic peaks.
-- Use the `custom` format so restores can target specific schemas or tables.
-- Gzip immediately to save space; a typical daily dump stays under 50 MB.
-- Make sure `/usr/local/bin/pg_dump` matches the server PostgreSQL version.
+- The wrapper script emits `.dump.gz` files named `YYYYMMDD_HHMMSS_<database>.dump.gz` in `/var/backups/explorertoken`.
+- Adjust the schedule or prepend `BACKUP_DIR=/mnt/backups`, `PGHOST=...`, `RETENTION_DAYS=30`, etc., as needed.
 
 ### Retention policy
 
-Keep the last 14 daily dumps and prune anything older. Add a second cron entry:
+Retention is handled inside the helper script (default 14 days via `RETENTION_DAYS`). To change the window, either export a different value in the cron entry or edit the script.
 
-```
-15 4 * * * explorertoken       /usr/bin/find /var/backups/explorertoken -name '*_explorertoken.dump.gz' -type f -mtime +14 -delete
-```
-
-Adjust `+14` if compliance needs longer retention. For monthly “golden” snapshots, run the dump job on the first day of the month and copy the artifact to cold storage (S3/Glacier).
+For monthly “golden” snapshots, run the dump job on the first day of the month and copy the artifact to cold storage (S3/Glacier).
 
 ### Permissions & verification
 
 - Restrict the backup directory to `750` so only the service user and backup group can read it.
-- Store the database password in `/var/lib/explorertoken/.pgpass` with `600` permissions to avoid exposing credentials in process listings.
+- Store the database password in `/var/lib/explorertoken/.pgpass` with `600` permissions to avoid exposing credentials in process listings. Example entry:
+
+  ```
+  127.0.0.1:5432:explorertoken_db:explorertoken:super-secret-password
+  ```
+
 - Use `pg_restore --list` on a random dump each week to confirm it can be read.
 
 ---
