@@ -20,8 +20,7 @@ export class ApiError extends Error {
   }
 }
 
-type ChainPayload = Partial<Chain> & { id: number };
-type ChainResponse = { chains: ChainPayload[] } | ChainPayload[];
+type ChainResponse = { chains: Chain[] } | Chain[];
 
 type RequestOptions = RequestInit & { token?: string };
 
@@ -57,17 +56,13 @@ async function fetchJson<T>(pathname: string, options: RequestOptions = {}): Pro
 }
 
 function normalizeChains(payload: ChainResponse): Chain[] {
-  let rawList: ChainPayload[] = [];
+  const rawList: Array<Partial<Chain> & { id: number; supported?: boolean }> = Array.isArray(payload)
+    ? (payload as Array<Partial<Chain> & { id: number; supported?: boolean }>)
+    : Array.isArray((payload as { chains?: Chain[] }).chains)
+      ? ((payload as { chains: Array<Partial<Chain> & { id: number; supported?: boolean }> }).chains)
+      : [];
 
-  if (Array.isArray(payload)) {
-    rawList = payload;
-  } else if (Array.isArray(payload.chains)) {
-    rawList = payload.chains;
-  }
-
-  return rawList
-    .filter((chain): chain is ChainPayload => Boolean(chain && typeof chain.id === "number"))
-    .map((chain) => mergeChainMetadata(chain));
+  return mergeChainMetadata(rawList);
 }
 
 export async function fetchChains(): Promise<Chain[]> {

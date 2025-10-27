@@ -1,121 +1,155 @@
 import type { Chain } from "../types/api";
 
-export const CHAIN_METADATA: Record<number, Chain> = {
-  1: {
-    id: 1,
-    key: "ethereum",
-    name: "Ethereum",
-    shortName: "ETH",
-    nativeSymbol: "ETH",
-    explorerUrl: "https://etherscan.io",
-    supported: true,
-  },
-  10: {
-    id: 10,
-    key: "optimism",
-    name: "Optimism",
-    shortName: "OP",
-    nativeSymbol: "ETH",
-    explorerUrl: "https://optimistic.etherscan.io",
-    supported: true,
-  },
-  25: {
-    id: 25,
-    key: "cronos",
-    name: "Cronos",
-    shortName: "CRO",
-    nativeSymbol: "CRO",
-    explorerUrl: "https://cronoscan.com",
-    supported: false,
-  },
-  56: {
-    id: 56,
-    key: "bsc",
-    name: "BNB Smart Chain",
-    shortName: "BSC",
-    nativeSymbol: "BNB",
-    explorerUrl: "https://bscscan.com",
-    supported: true,
-  },
-  137: {
-    id: 137,
-    key: "polygon",
-    name: "Polygon",
-    shortName: "POL",
-    nativeSymbol: "POL",
-    explorerUrl: "https://polygonscan.com",
-    supported: true,
-  },
-  324: {
-    id: 324,
-    key: "zkSync",
-    name: "zkSync Era",
-    shortName: "ZKS",
-    nativeSymbol: "ETH",
-    explorerUrl: "https://explorer.zksync.io",
-    supported: true,
-  },
-  5000: {
-    id: 5000,
-    key: "mantle",
-    name: "Mantle",
-    shortName: "MNT",
-    nativeSymbol: "MNT",
-    explorerUrl: "https://mantlescan.xyz",
-    supported: true,
-  },
-  8453: {
-    id: 8453,
-    key: "base",
-    name: "Base",
-    shortName: "BASE",
-    nativeSymbol: "ETH",
-    explorerUrl: "https://basescan.org",
-    supported: true,
-  },
-  42161: {
-    id: 42161,
-    key: "arbitrum",
-    name: "Arbitrum",
-    shortName: "ARB",
-    nativeSymbol: "ETH",
-    explorerUrl: "https://arbiscan.io",
-    supported: true,
-  },
-  43114: {
-    id: 43114,
-    key: "avalanche",
-    name: "Avalanche C-Chain",
-    shortName: "AVAX",
-    nativeSymbol: "AVAX",
-    explorerUrl: "https://snowtrace.io",
-    supported: true,
-  },
-};
+export type ChainMetadata = Chain;
 
-export function mergeChainMetadata(partial: Partial<Chain> & { id: number }): Chain {
-  const known = CHAIN_METADATA[partial.id];
-  const fallbackName = `Chain ${partial.id}`;
+const ORDERED_CHAIN_METADATA: ChainMetadata[] = [
+	{
+		id: 1,
+		key: "ethereum",
+		name: "Ethereum",
+		shortName: "Ethereum",
+		nativeSymbol: "ETH",
+		explorerUrl: "https://etherscan.io",
+		supported: true,
+	},
+	{
+		id: 10,
+		key: "optimism",
+		name: "Optimism",
+		shortName: "Optimism",
+		nativeSymbol: "OP",
+		explorerUrl: "https://optimistic.etherscan.io",
+		supported: true,
+	},
+	{
+		id: 56,
+		key: "bsc",
+		name: "BNB Chain",
+		shortName: "BSC",
+		nativeSymbol: "BNB",
+		explorerUrl: "https://bscscan.com",
+		supported: true,
+	},
+	{
+		id: 137,
+		key: "polygon",
+		name: "Polygon",
+		shortName: "Polygon",
+		nativeSymbol: "MATIC",
+		explorerUrl: "https://polygonscan.com",
+		supported: true,
+	},
+	{
+		id: 42161,
+		key: "arbitrum",
+		name: "Arbitrum One",
+		shortName: "Arbitrum",
+		nativeSymbol: "ETH",
+		explorerUrl: "https://arbiscan.io",
+		supported: true,
+	},
+	{
+		id: 43114,
+		key: "avalanche",
+		name: "Avalanche C-Chain",
+		shortName: "Avalanche",
+		nativeSymbol: "AVAX",
+		explorerUrl: "https://snowtrace.io",
+		supported: true,
+	},
+	{
+		id: 8453,
+		key: "base",
+		name: "Base",
+		shortName: "Base",
+		nativeSymbol: "ETH",
+		explorerUrl: "https://basescan.org",
+		supported: true,
+	},
+	{
+		id: 324,
+		key: "zksync",
+		name: "zkSync Era",
+		shortName: "zkSync",
+		nativeSymbol: "ETH",
+		explorerUrl: "https://explorer.zksync.io",
+		supported: true,
+	},
+	{
+		id: 5000,
+		key: "mantle",
+		name: "Mantle",
+		shortName: "Mantle",
+		nativeSymbol: "MNT",
+		explorerUrl: "https://mantlescan.xyz",
+		supported: true,
+	},
+	{
+		id: 25,
+		key: "cronos",
+		name: "Cronos",
+		shortName: "Cronos",
+		nativeSymbol: "CRO",
+		explorerUrl: "https://cronoscan.com",
+		supported: false,
+	},
+];
 
-  if (!known) {
-    return {
-      id: partial.id,
-      key: partial.key ?? `chain-${partial.id}`,
-      name: partial.name ?? fallbackName,
-      shortName: partial.shortName ?? fallbackName,
-      nativeSymbol: partial.nativeSymbol ?? partial.shortName ?? "",
-      explorerUrl: partial.explorerUrl ?? "",
-      supported: Boolean(partial.supported),
-    };
-  }
+const CHAIN_METADATA_BY_ID = ORDERED_CHAIN_METADATA.reduce<Record<number, ChainMetadata>>(
+	(accumulator, chain) => {
+		accumulator[chain.id] = chain;
+		return accumulator;
+	},
+	{},
+);
 
-  return {
-    ...known,
-    ...partial,
-    name: partial.name ?? known.name,
-    shortName: partial.shortName ?? known.shortName,
-    nativeSymbol: partial.nativeSymbol ?? known.nativeSymbol,
-    explorerUrl: partial.explorerUrl ?? known.explorerUrl,
-    supported: typeof partial.supported === "boolean" ? partial.supported : known.supported,
-  };
+type RawChain = Partial<Chain> & { id: number; supported?: boolean };
+
+export function mergeChainMetadata(chains: RawChain[]): Chain[] {
+	const mapped = new Map<number, Chain>();
+
+	for (const chain of chains) {
+		const metadata = CHAIN_METADATA_BY_ID[chain.id];
+		const base = metadata ?? {
+			id: chain.id,
+			key: `chain-${chain.id}`,
+			name: chain.name ?? `Chain ${chain.id}`,
+			shortName: chain.shortName ?? chain.name ?? `Chain ${chain.id}`,
+			nativeSymbol: chain.nativeSymbol ?? "",
+			explorerUrl: chain.explorerUrl ?? "",
+			supported: chain.supported ?? false,
+		};
+
+		mapped.set(chain.id, {
+			...base,
+			key: chain.key ?? base.key,
+			name: chain.name ?? base.name,
+			shortName: chain.shortName ?? base.shortName,
+			nativeSymbol: chain.nativeSymbol ?? base.nativeSymbol,
+			explorerUrl: chain.explorerUrl ?? base.explorerUrl,
+			supported: chain.supported ?? base.supported,
+		});
+	}
+
+	const ordered: Chain[] = [];
+
+	for (const chain of ORDERED_CHAIN_METADATA) {
+		const existing = mapped.get(chain.id);
+		if (existing) {
+			ordered.push(existing);
+			mapped.delete(chain.id);
+		} else {
+				ordered.push({ ...chain });
+		}
+	}
+
+	for (const chain of mapped.values()) {
+			ordered.push({ ...chain });
+	}
+
+	return ordered;
+}
+
+export function getOrderedChainMetadata(): ChainMetadata[] {
+	return [...ORDERED_CHAIN_METADATA];
 }

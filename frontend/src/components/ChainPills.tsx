@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { Chain } from "../types/api";
 import { Badge } from "./Badge";
 import { PillButton } from "./PillButton";
@@ -10,25 +9,12 @@ interface ChainPillsProps {
 }
 
 export function ChainPills({ chains, selected, onToggle }: ChainPillsProps) {
-  const orderedChains = useMemo(
-    () =>
-      [...chains].sort((a, b) => {
-        if (a.supported === b.supported) {
-          return a.name.localeCompare(b.name);
-        }
-
-        return a.supported ? -1 : 1;
-      }),
-    [chains],
-  );
-
   return (
     <div className="flex flex-wrap gap-2">
-      {orderedChains.map((chain) => {
+      {chains.map((chain) => {
         const isSelected = selected.includes(chain.id);
         const isDisabled = !chain.supported;
-        const baseLabel = chain.shortName?.trim() ? chain.shortName : chain.name;
-        const label = chain.supported ? baseLabel : `${chain.name} (${chain.id})`;
+        const label = chain.shortName || chain.name || `Chain ${chain.id}`;
 
         return (
           <div key={chain.id} className="flex items-center gap-2">
@@ -37,7 +23,10 @@ export function ChainPills({ chains, selected, onToggle }: ChainPillsProps) {
               disabled={isDisabled}
               onClick={() => onToggle(chain.id)}
             >
-              {label}
+              <span className="flex items-center gap-1">
+                <span>{label}</span>
+                <span className="text-xs text-slate-400">({chain.id})</span>
+              </span>
             </PillButton>
             {!chain.supported ? <Badge variant="warning">Unsupported</Badge> : null}
           </div>
