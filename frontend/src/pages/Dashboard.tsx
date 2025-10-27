@@ -54,6 +54,15 @@ export function DashboardPage({
     setSearchValue("");
   }
 
+  const renderStatusValue = (value: string) =>
+    value
+      .split("_")
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+
+  const databaseStatus = health?.services?.database ?? (health ? "unknown" : "loading");
+  const redisStatus = health?.services?.redis ?? (health ? "memory_fallback" : "loading");
+
   return (
     <div className="space-y-8">
       <section className="rounded-2xl border border-slate-800/70 bg-surface-light/40 p-6 shadow-subtle">
@@ -78,14 +87,39 @@ export function DashboardPage({
       </section>
 
       <section>
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-4">
           {healthLoading || !health ? (
             <Skeleton className="h-32" />
           ) : (
             <>
               <StatCard label="Service Status" value={health.ok ? "Operational" : "Degraded"} hint={`Version ${health.version}`} />
+              <StatCard
+                label="Database"
+                value={renderStatusValue(databaseStatus)}
+                hint={databaseStatus === "not_configured" ? "Using external service" : "Configured via env"}
+              />
+              <StatCard
+                label="Redis"
+                value={renderStatusValue(redisStatus)}
+                hint={redisStatus === "memory_fallback" ? "Limiter running in-memory" : "Connected to Redis"}
+              />
+            </>
+          )}
+        </div>
+      </section>
+      <section>
+        <div className="grid gap-4 md:grid-cols-3">
+          {healthLoading || !health ? (
+            <Skeleton className="h-32" />
+          ) : (
+            <>
               <StatCard label="Uptime" value={`${formatNumber(health.uptime)}s`} hint="Smoothed over process lifetime" />
               <StatCard label="Selected Chains" value={selectedChains.length} hint="Adjust filters above" />
+              <StatCard
+                label="Version"
+                value={health.version}
+                hint="Backend git SHA"
+              />
             </>
           )}
         </div>

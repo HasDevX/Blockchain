@@ -12,6 +12,10 @@ export interface HealthResponse {
   ok: boolean;
   version: string;
   uptime: number;
+  services?: {
+    database: string;
+    redis: string;
+  };
 }
 
 export interface TokenSummary {

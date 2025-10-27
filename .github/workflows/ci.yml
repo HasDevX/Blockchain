@@ -22,13 +22,16 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Lint
         run: npm run lint
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Backend tests
+        run: npm test --workspace backend
 
       - name: Build
         run: npm run build

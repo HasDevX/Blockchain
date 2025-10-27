@@ -34,16 +34,6 @@ export function authenticateRequest(req: Request, _res: Response, next: NextFunc
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.user) {
-    if (req.method === "HEAD") {
-      res.status(UNAUTHORIZED_STATUS).end();
-      return;
-    }
-
-    if (req.method === "GET") {
-      res.status(UNAUTHORIZED_STATUS).json({ error: "unauthorized" });
-      return;
-    }
-
     res.status(UNAUTHORIZED_STATUS).json({ error: "unauthorized" });
     return;
   }

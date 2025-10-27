@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import rateLimitFactory, { RateLimitRequestHandler } from "express-rate-limit";
-import { RedisStore } from "rate-limit-redis";
+import RedisStore from "rate-limit-redis";
 import { AppEnv } from "../config/env";
 import { getRedisClient } from "../lib/redisClient";
 
@@ -26,7 +26,7 @@ export async function createRateLimiters(env: AppEnv): Promise<RateLimiterBundle
 
     return new RedisStore({
       prefix,
-      sendCommand: (...args: string[]) => redisClient.sendCommand(args),
+      sendCommand: (args: string[]) => redisClient.sendCommand(args as unknown as Parameters<typeof redisClient.sendCommand>[0]),
     });
   };
 

@@ -15,6 +15,13 @@ describe("security middleware", () => {
   it("rejects unauthenticated HEAD admin request with 401", async () => {
     const response = await request(app).head("/api/admin/settings");
     expect(response.status).toBe(401);
+    expect(response.get("content-type")).toContain("application/json");
+  });
+
+  it("rejects unauthenticated GET admin request with JSON body", async () => {
+    const response = await request(app).get("/api/admin/settings");
+    expect(response.status).toBe(401);
+    expect(response.body).toEqual({ error: "unauthorized" });
   });
 
   it("returns configured chain list", async () => {

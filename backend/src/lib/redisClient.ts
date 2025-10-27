@@ -5,6 +5,7 @@ type RedisClient = ReturnType<typeof createClient>;
 
 let client: RedisClient | null = null;
 let clientPromise: Promise<RedisClient | null> | null = null;
+let missingUrlWarned = false;
 
 async function connect(redisUrl: string): Promise<RedisClient | null> {
   const redisClient = createClient({ url: redisUrl });
@@ -27,6 +28,10 @@ async function connect(redisUrl: string): Promise<RedisClient | null> {
 
 export async function getRedisClient(env: AppEnv): Promise<RedisClient | null> {
   if (!env.redisUrl) {
+    if (!missingUrlWarned) {
+      console.warn("[redis] REDIS_URL not set; using in-memory rate limiter");
+      missingUrlWarned = true;
+    }
     return null;
   }
 

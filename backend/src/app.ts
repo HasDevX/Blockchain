@@ -33,12 +33,11 @@ export async function createApp() {
 
   app.use(express.json({ limit: "1mb" }));
   app.use(express.urlencoded({ extended: false }));
-  app.use(createStrictCors(env));
 
   const rateLimiters = await createRateLimiters(env);
 
   app.use(createHealthRouter());
-  app.use("/api", createApiRouter(rateLimiters));
+  app.use("/api", createStrictCors(env), createApiRouter(rateLimiters));
 
   app.use(notFoundHandler);
   app.use(errorHandler);
