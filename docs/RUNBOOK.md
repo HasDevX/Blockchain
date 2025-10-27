@@ -40,7 +40,7 @@ sudo journalctl -u explorertoken-backend -n 40 --no-pager
 
 ## Token holders indexer
 
-The holders indexer walks ERC-20 transfers in small batches per token/chain. A lightweight scheduler now triggers a single pass across all tracked tokens, waits `HOLDERS_INDEXER_STEP_MS` between productive batches, and slows down to `HOLDERS_INDEXER_IDLE_MS` when everything is caught up.
+The holders indexer walks ERC-20 transfers in small batches per token/chain. A `node-cron` scheduler triggers a sweep of all tracked tokens on a short cadence (default: every 5 seconds via `HOLDERS_INDEXER_CRON`), so each run processes a limited block range before the next tick.
 
 ### Add or reindex a token
 
@@ -63,9 +63,8 @@ The holders indexer walks ERC-20 transfers in small batches per token/chain. A l
 ### Tune batch size & cadence
 
 - `HOLDERS_INDEXER_CHUNK` – number of blocks fetched per batch (defaults to 5,000). Lower it if RPCs time out or rate-limit; raise gently for faster catch-up.
-- `HOLDERS_INDEXER_STEP_MS` – delay (ms) before the scheduler immediately retries after doing work. Set to ~500–1000 ms to keep backfills moving without hammering RPCs.
-- `HOLDERS_INDEXER_IDLE_MS` – delay (ms) when no work was found. Increase to reduce idle polling on quiet networks.
-- `HOLDERS_INDEXER_ONCE=true` runs a single pass (useful for smoke tests or cron-driven jobs).
+- `HOLDERS_INDEXER_CRON` – cron expression (with seconds) that controls how often the worker sweeps tracked tokens. Example: `*/2 * * * * *` for every 2 seconds, `*/15 * * * * *` for every 15 seconds.
+- `HOLDERS_INDEXER_ONCE=true` runs a single pass (useful for smoke tests or ad-hoc backfills).
 
 Apply changes by updating `/etc/systemd/system/explorertoken-holders-indexer.service` environment overrides or the `.env` file, then reload the unit:
 

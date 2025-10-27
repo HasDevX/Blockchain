@@ -61,8 +61,9 @@ export function TokenPage() {
   }
 
   const holders = holdersQuery.data;
-  const holdersStatus = holders?.status ?? "ok";
+  const holdersStatus = holders?.status;
   const isIndexing = holdersStatus === "indexing";
+  const hasStatus = typeof holdersStatus === "string";
   const holdersItems = holders?.items ?? [];
   const isInitialLoading = holdersQuery.isLoading && !holders;
   const isRefreshing = holdersQuery.isValidating && Boolean(holders);
@@ -80,12 +81,13 @@ export function TokenPage() {
           message: "Something went wrong while fetching holders. Please retry shortly.",
         }
     : null;
+  const indexingMessage = "Indexing holders… check back shortly.";
   const indexingAlert =
     !holdersAlert && isIndexing
       ? {
           variant: "info" as const,
           title: "Indexing holders",
-          message: "We're still indexing holders for this token. Data will refresh automatically.",
+          message: indexingMessage,
         }
       : null;
 
@@ -95,8 +97,10 @@ export function TokenPage() {
   const holdersEmptyState = holdersAlert
     ? undefined
     : isIndexing
-      ? "Indexing in progress. Check back shortly."
-      : "No holders found for this token yet.";
+      ? indexingMessage
+      : !hasStatus && holdersItems.length === 0
+        ? "No holder data yet."
+        : "No holders found for this token yet.";
 
   function goToNext() {
     if (!nextCursor) {
@@ -240,9 +244,7 @@ export function TokenPage() {
           </div>
           {isRefreshing ? (
             <p className="mt-2 text-xs text-slate-500">
-              {isIndexing
-                ? "Indexing in progress — automatically refreshing."
-                : "Refreshing holders…"}
+              {isIndexing ? indexingMessage : "Refreshing holders…"}
             </p>
           ) : null}
           <div className="mt-4 flex items-center justify-between text-sm text-slate-400">

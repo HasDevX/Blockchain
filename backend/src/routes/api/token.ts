@@ -1,5 +1,6 @@
 import { Request, Response, Router } from "express";
 import { getChainById } from "../../config/chains";
+import { normalizeAddress } from "../../services/holderStore";
 import { getTokenHolders, UnsupportedChainError } from "../../services/tokenService";
 
 const DEFAULT_LIMIT = 25;
@@ -46,13 +47,29 @@ function sanitizeCursor(raw: string | undefined): string | null {
     return null;
   }
 
-  const parsed = Number(raw);
+  const trimmed = raw.trim();
 
-  if (!Number.isFinite(parsed) || parsed < 0) {
+  if (!trimmed) {
     return null;
   }
 
-  return String(Math.floor(parsed));
+  const [balancePart, holderPart] = trimmed.split(":");
+
+  if (!balancePart || !holderPart) {
+    return null;
+  }
+
+  if (!/^[0-9]+$/.test(balancePart)) {
+    return null;
+  }
+
+  try {
+    const normalizedHolder = normalizeAddress(holderPart);
+    return `${balancePart}:${normalizedHolder}`;
+  } catch (error) {
+    console.warn("invalid cursor holder", error);
+    return null;
+  }
 }
 
 export function createTokenRouter() {

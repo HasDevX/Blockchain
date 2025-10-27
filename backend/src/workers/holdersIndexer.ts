@@ -1,3 +1,5 @@
+import cron from "node-cron";
+import type { ScheduledTask } from "node-cron";
 import { getPool, withTransaction } from "../lib/db";
 import { getRpcUrl } from "../config/rpc";
 import { RpcClient, RpcRateLimitError } from "../lib/rpcClient";
@@ -16,8 +18,7 @@ import {
 } from "../services/tokenHolderRepository";
 
 const DEFAULT_BLOCK_CHUNK = BigInt(process.env.HOLDERS_INDEXER_CHUNK ?? "5000");
-const IDLE_SLEEP_MS = Number(process.env.HOLDERS_INDEXER_IDLE_MS ?? "5000");
-const STEP_INTERVAL_MS = Number(process.env.HOLDERS_INDEXER_STEP_MS ?? "1000");
+const SCHEDULE_EXPRESSION = process.env.HOLDERS_INDEXER_CRON ?? "*/5 * * * * *";
 const RETRY_BASE_MS = 1_500;
 
 interface IndexStats {
@@ -164,24 +165,8 @@ async function runOnce(): Promise<boolean> {
 
 const runOnceOnly = process.env.HOLDERS_INDEXER_ONCE === "true";
 
-let timer: NodeJS.Timeout | null = null;
 let isTickRunning = false;
-
-function scheduleNext(delay: number) {
-  if (runOnceOnly) {
-    return;
-  }
-
-  if (timer) {
-    clearTimeout(timer);
-  }
-
-  const normalizedDelay = Number.isFinite(delay) && delay > 0 ? delay : IDLE_SLEEP_MS;
-
-  timer = setTimeout(() => {
-    void tick();
-  }, normalizedDelay);
-}
+let job: ScheduledTask | null = null;
 
 async function tick() {
   if (isTickRunning) {
@@ -192,32 +177,44 @@ async function tick() {
 
   try {
     const didWork = await runOnce();
-
-    if (!runOnceOnly) {
-      const nextDelay = didWork ? STEP_INTERVAL_MS : IDLE_SLEEP_MS;
-      scheduleNext(nextDelay);
+    if (runOnceOnly && !didWork) {
+      console.log("holders indexer completed single run");
     }
   } catch (error) {
     console.error("holders indexer tick failed", error);
-    if (!runOnceOnly) {
-      scheduleNext(IDLE_SLEEP_MS);
-    }
   } finally {
     isTickRunning = false;
   }
 }
 
 function stopScheduler(reason: string) {
-  if (timer) {
-    clearTimeout(timer);
-    timer = null;
+  if (job) {
+    job.stop();
+    job = null;
   }
 
   console.log(JSON.stringify({ event: "holders.indexer.stop", reason }));
 }
 
 async function startScheduler() {
-  await tick();
+  if (runOnceOnly) {
+    await tick();
+    return;
+  }
+
+  const scheduleExpression = cron.validate(SCHEDULE_EXPRESSION)
+    ? SCHEDULE_EXPRESSION
+    : "*/5 * * * * *";
+
+  if (!cron.validate(SCHEDULE_EXPRESSION)) {
+    console.warn(
+      `Invalid HOLDERS_INDEXER_CRON expression "${SCHEDULE_EXPRESSION}"; falling back to */5 * * * * *`,
+    );
+  }
+
+  job = cron.schedule(scheduleExpression, () => {
+    void tick();
+  });
 }
 
 startScheduler().catch((error) => {
