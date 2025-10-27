@@ -11,9 +11,11 @@
     "test": "vitest run",
     "migrate": "ts-node scripts/run-migrations.ts",
     "holders:index": "ts-node src/workers/holdersIndexer.ts",
+    "create-admin": "ts-node scripts/create-admin.ts",
     "lint": "eslint --max-warnings=0 --ext .ts ./src ./scripts && prettier --check \"src/**/*.ts\" \"scripts/**/*.ts\""
   },
   "dependencies": {
+    "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
@@ -25,6 +27,7 @@
     "redis": "^4.7.0"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.2",
     "@types/cors": "^2.8.15",
     "@types/express": "^4.17.21",
     "@types/node": "^20.8.7",
