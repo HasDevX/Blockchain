@@ -79,11 +79,13 @@ describe("getTokenHolders", () => {
       | undefined;
 
     expect(requestUrl.origin + requestUrl.pathname).toBe(
-      "https://api.polygonscan.com/api/v2/token/0xabcdefabcdefabcdefabcdefabcdefabcdefabcd/holders",
+      "https://api.polygonscan.com/api/v2/token/holders",
     );
-    expect(requestUrl.searchParams.get("chainId")).toBe("137");
+    expect(requestUrl.searchParams.get("contractaddress")).toBe(
+      "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+    );
     expect(requestUrl.searchParams.get("page")).toBe("1");
-    expect(requestUrl.searchParams.get("pageSize")).toBe("2");
+    expect(requestUrl.searchParams.get("pagesize")).toBe("2");
     expect(requestUrl.searchParams.get("sort")).toBe("desc");
     expect(requestUrl.searchParams.has("apikey")).toBe(false);
     expect(headers).toMatchObject({

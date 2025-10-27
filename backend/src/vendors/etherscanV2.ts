@@ -110,23 +110,41 @@ export function getApiKeyForChain(chainId: number): string | undefined {
   return process.env.ETHERSCAN_API_KEY;
 }
 
-function createRequestUrl(
-  host: string,
-  chainId: number,
-  address: string,
-  page: number,
-  limit: number,
-) {
-  const url = new URL(`https://${host}/api/v2/token/${address}/holders`);
+interface BuildHoldersRequestParams {
+  chainId: number;
+  address: string;
+  page: number;
+  pageSize: number;
+  sort: "asc" | "desc";
+}
+
+interface HoldersRequest {
+  host: string;
+  path: string;
+  query: string;
+}
+
+export function buildHoldersRequest({
+  chainId,
+  address,
+  page,
+  pageSize,
+  sort,
+}: BuildHoldersRequestParams): HoldersRequest {
+  const host = getHostForChain(chainId);
+  const lowercasedAddress = address.toLowerCase();
   const params = new URLSearchParams({
-    chainId: String(chainId),
+    contractaddress: lowercasedAddress,
     page: String(page),
-    pageSize: String(limit),
-    sort: "desc",
+    pagesize: String(pageSize),
+    sort,
   });
 
-  url.search = params.toString();
-  return url;
+  return {
+    host,
+    path: "/api/v2/token/holders",
+    query: params.toString(),
+  };
 }
 
 async function fetchWithRetry(
@@ -165,10 +183,15 @@ export class EtherscanV2Client {
     page: number,
     limit: number,
   ): Promise<EtherscanVendorResult> {
-    const host = getHostForChain(chainId);
+    const { host, path, query } = buildHoldersRequest({
+      chainId,
+      address,
+      page,
+      pageSize: limit,
+      sort: "desc",
+    });
     const apiKey = getApiKeyForChain(chainId);
-    const url = createRequestUrl(host, chainId, address, page, limit);
-    const path = `${url.pathname}${url.search}`;
+    const requestUrl = new URL(`https://${host}${path}?${query}`);
 
     const headers: Record<string, string> = {
       Accept: "application/json",
@@ -182,7 +205,7 @@ export class EtherscanV2Client {
       JSON.stringify({
         event: "holders.vendor.request",
         host,
-        path,
+        path: `${path}?${query}`,
         chainId,
       }),
     );
@@ -190,7 +213,7 @@ export class EtherscanV2Client {
     let response: Response;
 
     try {
-      response = await fetchWithRetry(chainId, url, headers);
+      response = await fetchWithRetry(chainId, requestUrl, headers);
     } catch (error) {
       throw new EtherscanUpstreamError({
         chainId,
