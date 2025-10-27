@@ -41,6 +41,7 @@ describe("getTokenHolders", () => {
     fetchMock.mockResolvedValue({
       ok: true,
       status: 200,
+      headers: new Headers(),
       json: async () => ({
         status: "1",
         message: "OK",
@@ -77,12 +78,13 @@ describe("getTokenHolders", () => {
       | Record<string, string>
       | undefined;
 
-    expect(requestUrl.origin + requestUrl.pathname).toBe("https://api.polygonscan.com/api");
-    expect(requestUrl.searchParams.get("contractaddress")).toBe(
-      "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+    expect(requestUrl.origin + requestUrl.pathname).toBe(
+      "https://api.polygonscan.com/api/v2/token/0xabcdefabcdefabcdefabcdefabcdefabcdefabcd/holders",
     );
+    expect(requestUrl.searchParams.get("chainId")).toBe("137");
     expect(requestUrl.searchParams.get("page")).toBe("1");
-    expect(requestUrl.searchParams.get("offset")).toBe("2");
+    expect(requestUrl.searchParams.get("pageSize")).toBe("2");
+    expect(requestUrl.searchParams.get("sort")).toBe("desc");
     expect(requestUrl.searchParams.has("apikey")).toBe(false);
     expect(headers).toMatchObject({
       Accept: "application/json",
@@ -102,6 +104,7 @@ describe("getTokenHolders", () => {
     fetchMock.mockResolvedValue({
       ok: true,
       status: 200,
+      headers: new Headers(),
       json: async () => ({
         status: "1",
         message: "OK",
@@ -137,6 +140,7 @@ describe("getTokenHolders", () => {
     fetchMock.mockResolvedValue({
       ok: true,
       status: 200,
+      headers: new Headers(),
       json: async () => ({
         status: "1",
         message: "OK",
@@ -152,6 +156,7 @@ describe("getTokenHolders", () => {
               TokenHolderQuantity: "500",
             },
           ],
+          nextPageToken: "cursor-2",
         },
       }),
     } as unknown as Response);
@@ -169,6 +174,32 @@ describe("getTokenHolders", () => {
       { rank: 1, holder: "0xholder1", balance: "999", pct: 12.5 },
       { rank: 2, holder: "0xholder2", balance: "500", pct: 0 },
     ]);
+    expect(result.nextCursor).toBe("cursor-2");
+  });
+
+  it("returns empty items when vendor reports no data", async () => {
+    process.env.ETHERSCAN_API_KEY = "shared-key";
+
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({
+        status: "0",
+        message: "No data found",
+      }),
+    } as unknown as Response);
+
+    const { getTokenHolders } = await import("../services/tokenService");
+
+    const result = await getTokenHolders({
+      chainId: 1,
+      address: "0xabc",
+      cursor: null,
+      limit: 10,
+    });
+
+    expect(result.items).toEqual([]);
     expect(result.nextCursor).toBeUndefined();
   });
 
@@ -188,6 +219,7 @@ describe("getTokenHolders", () => {
     fetchMock.mockResolvedValue({
       ok: true,
       status: 200,
+      headers: new Headers(),
       json: async () => ({
         status: "1",
         message: "OK",

@@ -13,6 +13,7 @@ const CHAIN_HOSTS: Record<number, string> = {
 };
 
 const MAX_RETRIES = 2;
+const DEFAULT_RETRY_AFTER_SECONDS = 1;
 
 export interface EtherscanTokenHolderDto {
   TokenHolderAddress: string;
@@ -24,6 +25,16 @@ export interface EtherscanTokenHolderDto {
 export interface EtherscanTokenHolderData {
   items?: EtherscanTokenHolderDto[];
   result?: EtherscanTokenHolderDto[];
+  cursor?: string;
+  nextPageToken?: string;
+  next_page_token?: string;
+  page?: number | string;
+  currentPage?: number | string;
+  current_page?: number | string;
+  hasMore?: boolean;
+  has_more?: boolean;
+  totalPages?: number | string;
+  total_pages?: number | string;
   [key: string]: unknown;
 }
 
@@ -46,6 +57,7 @@ export class EtherscanUpstreamError extends Error {
   readonly httpStatus: number;
   readonly vendorStatus?: string;
   readonly vendorMessage?: string;
+  readonly retryAfterSeconds?: number;
 
   constructor(params: {
     chainId: number;
@@ -53,6 +65,7 @@ export class EtherscanUpstreamError extends Error {
     httpStatus: number;
     vendorStatus?: string;
     vendorMessage?: string;
+    retryAfterSeconds?: number;
     cause?: unknown;
   }) {
     super(
@@ -66,6 +79,7 @@ export class EtherscanUpstreamError extends Error {
     this.httpStatus = params.httpStatus;
     this.vendorStatus = params.vendorStatus;
     this.vendorMessage = params.vendorMessage;
+    this.retryAfterSeconds = params.retryAfterSeconds;
     if (params.cause !== undefined) {
       // @ts-expect-error cause is available in newer runtimes; ignore if unsupported
       this.cause = params.cause;
@@ -96,14 +110,18 @@ export function getApiKeyForChain(chainId: number): string | undefined {
   return process.env.ETHERSCAN_API_KEY;
 }
 
-function createRequestUrl(host: string, address: string, page: number, limit: number) {
-  const url = new URL(`https://${host}/api`);
+function createRequestUrl(
+  host: string,
+  chainId: number,
+  address: string,
+  page: number,
+  limit: number,
+) {
+  const url = new URL(`https://${host}/api/v2/token/${address}/holders`);
   const params = new URLSearchParams({
-    module: "token",
-    action: "tokenholderlist",
-    contractaddress: address,
+    chainId: String(chainId),
     page: String(page),
-    offset: String(limit),
+    pageSize: String(limit),
     sort: "desc",
   });
 
@@ -149,7 +167,7 @@ export class EtherscanV2Client {
   ): Promise<EtherscanVendorResult> {
     const host = getHostForChain(chainId);
     const apiKey = getApiKeyForChain(chainId);
-    const url = createRequestUrl(host, address, page, limit);
+    const url = createRequestUrl(host, chainId, address, page, limit);
 
     const headers: Record<string, string> = {
       Accept: "application/json",
@@ -173,22 +191,116 @@ export class EtherscanV2Client {
       });
     }
 
-    try {
-      const payload = (await response.json()) as EtherscanTokenHolderResponse;
+    let payload: EtherscanTokenHolderResponse | undefined;
 
-      return {
-        host,
-        httpStatus: response.status,
-        payload,
-      };
+    try {
+      payload = (await response.json()) as EtherscanTokenHolderResponse;
     } catch (error) {
+      if (response.ok) {
+        throw new EtherscanUpstreamError({
+          chainId,
+          host,
+          httpStatus: response.status,
+          vendorMessage: "invalid_json",
+          cause: error,
+        });
+      }
+    }
+
+    const vendorStatus = payload?.status;
+    const vendorMessage = extractVendorMessage(payload);
+    const retryAfterHeader = getRetryAfterHeaderValue(response.headers);
+
+    if (response.status === 429) {
+      const retryAfterSeconds = parseRetryAfterHeader(retryAfterHeader);
+      throw new EtherscanUpstreamError({
+        chainId,
+        host,
+        httpStatus: 429,
+        vendorStatus,
+        vendorMessage: vendorMessage ?? "rate_limited",
+        retryAfterSeconds,
+      });
+    }
+
+    if (response.status >= 400) {
       throw new EtherscanUpstreamError({
         chainId,
         host,
         httpStatus: response.status,
-        vendorMessage: "invalid_json",
-        cause: error,
+        vendorStatus,
+        vendorMessage: vendorMessage ?? `http_error_${response.status}`,
       });
     }
+
+    if (!payload) {
+      throw new EtherscanUpstreamError({
+        chainId,
+        host,
+        httpStatus: response.status,
+        vendorMessage: "empty_response",
+      });
+    }
+
+    return {
+      host,
+      httpStatus: response.status,
+      payload,
+    };
   }
+}
+
+function parseRetryAfterHeader(headerValue: string | null): number | undefined {
+  if (!headerValue) {
+    return DEFAULT_RETRY_AFTER_SECONDS;
+  }
+
+  const numeric = Number(headerValue);
+
+  if (Number.isFinite(numeric)) {
+    return Math.max(0, Math.ceil(numeric));
+  }
+
+  const parsedDate = Date.parse(headerValue);
+  if (!Number.isNaN(parsedDate)) {
+    const diffMs = parsedDate - Date.now();
+    if (diffMs <= 0) {
+      return DEFAULT_RETRY_AFTER_SECONDS;
+    }
+
+    return Math.ceil(diffMs / 1000);
+  }
+
+  return DEFAULT_RETRY_AFTER_SECONDS;
+}
+
+function getRetryAfterHeaderValue(headers: Response["headers"] | undefined): string | null {
+  if (!headers) {
+    return null;
+  }
+
+  if (typeof headers.get === "function") {
+    return headers.get("retry-after");
+  }
+
+  const candidate = (headers as unknown as Record<string, string | undefined>)["retry-after"];
+  return candidate ?? null;
+}
+
+function extractVendorMessage(
+  payload: EtherscanTokenHolderResponse | undefined,
+): string | undefined {
+  if (!payload) {
+    return undefined;
+  }
+
+  if (typeof payload.message === "string" && payload.message.trim().length > 0) {
+    return payload.message;
+  }
+
+  if (typeof payload.result === "string" && payload.result.trim().length > 0) {
+    return payload.result;
+  }
+
+  return undefined;
 }

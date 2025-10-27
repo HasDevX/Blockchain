@@ -124,8 +124,24 @@ export function createTokenRouter() {
             httpStatus: upstream.httpStatus,
             vendorStatus: upstream.vendorStatus,
             vendorMessage: upstream.vendorMessage,
+            retryAfterSeconds: upstream.retryAfterSeconds ?? null,
           }),
         );
+
+        if (upstream.httpStatus === 429) {
+          if (typeof upstream.retryAfterSeconds === "number") {
+            res.setHeader("Retry-After", String(upstream.retryAfterSeconds));
+          }
+
+          res.status(429).json({
+            error: "rate_limited",
+            vendor: "etherscan",
+            status: upstream.vendorStatus ?? null,
+            message: upstream.vendorMessage ?? null,
+          });
+          return;
+        }
+
         res.status(502).json({
           error: "upstream_error",
           vendor: "etherscan",

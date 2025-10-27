@@ -6,6 +6,7 @@ import { EtherscanClient } from "../vendors/etherscanClient";
 import {
   EtherscanUpstreamError,
   EtherscanV2Client,
+  type EtherscanTokenHolderData,
   type EtherscanTokenHolderDto,
   type EtherscanVendorResult,
 } from "../vendors/etherscanV2";
@@ -219,7 +220,7 @@ function extractHolderList(result: EtherscanVendorResult): EtherscanTokenHolderD
 
 function isNoRecordsMessage(message?: string) {
   const lower = message?.toLowerCase() ?? "";
-  return lower.includes("no tokens") || lower.includes("no records");
+  return lower.includes("no tokens") || lower.includes("no records") || lower.includes("no data");
 }
 
 function transformEtherscanResponse(
@@ -236,11 +237,38 @@ function transformEtherscanResponse(
   const holderList = extractHolderList(vendorResult);
 
   if (holderList) {
-    return normalizeEtherscanPayload(holderList, page, limit);
+    const normalized = normalizeEtherscanPayload(holderList, page, limit);
+    const vendorCursor = extractNextCursorFromData(
+      vendorResult.payload.data,
+      page,
+      limit,
+      normalized.items.length,
+    );
+
+    return {
+      items: normalized.items,
+      nextCursor: vendorCursor ?? normalized.nextCursor,
+    };
   }
 
   if (isNoRecordsMessage(vendorMessage) || isNoRecordsMessage(fallbackResultMessage)) {
     return { items: [] };
+  }
+
+  if (
+    isInvalidApiKeyMessage(vendorMessage) ||
+    isInvalidApiKeyMessage(fallbackResultMessage) ||
+    isDeprecatedMessage(vendorMessage) ||
+    isDeprecatedMessage(fallbackResultMessage) ||
+    (vendorStatus && vendorStatus !== "1")
+  ) {
+    throw new EtherscanUpstreamError({
+      chainId,
+      host: vendorResult.host,
+      httpStatus: vendorResult.httpStatus,
+      vendorStatus,
+      vendorMessage: vendorMessage ?? fallbackResultMessage ?? "unknown vendor error",
+    });
   }
 
   throw new EtherscanUpstreamError({
@@ -250,6 +278,127 @@ function transformEtherscanResponse(
     vendorStatus,
     vendorMessage: vendorMessage ?? fallbackResultMessage ?? "unknown vendor error",
   });
+}
+
+function extractNextCursorFromData(
+  data: EtherscanTokenHolderData | undefined,
+  currentPage: number,
+  limit: number,
+  itemCount: number,
+): string | undefined {
+  if (!data) {
+    return itemCount === limit ? String(currentPage + 1) : undefined;
+  }
+
+  const directCursor =
+    asString(data.cursor) ??
+    asString(data.nextPageToken) ??
+    asString(data.next_page_token) ??
+    asString((data as Record<string, unknown>).nextCursor);
+
+  if (directCursor) {
+    return directCursor;
+  }
+
+  const pagination = (data as Record<string, unknown>).pagination;
+  if (pagination && typeof pagination === "object") {
+    const paginationCursor =
+      asString((pagination as Record<string, unknown>).cursor) ??
+      asString((pagination as Record<string, unknown>).nextCursor) ??
+      asString((pagination as Record<string, unknown>).nextPageToken) ??
+      asString((pagination as Record<string, unknown>).next_page_token);
+
+    if (paginationCursor) {
+      return paginationCursor;
+    }
+
+    const paginationHasMore = asBoolean(
+      (pagination as Record<string, unknown>).hasMore ??
+        (pagination as Record<string, unknown>).has_more,
+    );
+    const paginationPage = asNumber(
+      (pagination as Record<string, unknown>).page ??
+        (pagination as Record<string, unknown>).currentPage ??
+        (pagination as Record<string, unknown>).current_page,
+    );
+
+    if (paginationHasMore === true && typeof paginationPage === "number") {
+      return String(paginationPage + 1);
+    }
+  }
+
+  const hasMore =
+    asBoolean(data.hasMore) ??
+    asBoolean(data.has_more) ??
+    asBoolean((data as Record<string, unknown>).more);
+
+  const pageValue = asNumber(data.page ?? data.currentPage ?? data.current_page);
+  const totalPages = asNumber(data.totalPages ?? data.total_pages);
+
+  if (hasMore === true && typeof pageValue === "number") {
+    return String(pageValue + 1);
+  }
+
+  if (typeof pageValue === "number" && typeof totalPages === "number" && totalPages > pageValue) {
+    return String(pageValue + 1);
+  }
+
+  return itemCount === limit ? String(currentPage + 1) : undefined;
+}
+
+function asString(value: unknown): string | undefined {
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  return undefined;
+}
+
+function asNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return undefined;
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const lower = value.toLowerCase();
+    if (lower === "true") {
+      return true;
+    }
+    if (lower === "false") {
+      return false;
+    }
+  }
+
+  return undefined;
+}
+
+function isInvalidApiKeyMessage(message?: string) {
+  const lower = message?.toLowerCase() ?? "";
+  return lower.includes("invalid api key");
+}
+
+function isDeprecatedMessage(message?: string) {
+  const lower = message?.toLowerCase() ?? "";
+  return lower.includes("deprecated") || lower.includes("v1");
 }
 
 function buildCacheKey(chainId: number, address: string, cursor: number, limit: number): string {
