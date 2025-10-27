@@ -78,7 +78,9 @@ export function AdminSettingsPage() {
           </div>
           <div>
             <span className="text-slate-500">Announcement</span>
-            <p className="mt-1 text-slate-300">{settings.announcement ?? "No active announcements."}</p>
+            <p className="mt-1 text-slate-300">
+              {settings.announcement ?? "No active announcements."}
+            </p>
           </div>
         </div>
       </div>

@@ -53,7 +53,11 @@ export function TokenPage() {
   }
 
   if (tokenQuery.error || !token) {
-    return <div className="rounded-xl border border-slate-800 bg-surface-light/40 p-8 text-center text-slate-400">Token not found.</div>;
+    return (
+      <div className="rounded-xl border border-slate-800 bg-surface-light/40 p-8 text-center text-slate-400">
+        Token not found.
+      </div>
+    );
   }
 
   const holders = holdersQuery.data;
@@ -151,7 +155,9 @@ export function TokenPage() {
             </div>
             <div>
               <dt className="text-xs uppercase text-slate-500">Support Status</dt>
-              <dd className="text-sm text-slate-300">{token.supported ? "Supported" : "Unsupported"}</dd>
+              <dd className="text-sm text-slate-300">
+                {token.supported ? "Supported" : "Unsupported"}
+              </dd>
             </div>
           </dl>
         </section>
@@ -171,7 +177,12 @@ export function TokenPage() {
             ) : null}
             <Table<TokenHolder>
               columns={[
-                { key: "rank", header: "#", render: (row: TokenHolder) => row.rank, className: "w-14" },
+                {
+                  key: "rank",
+                  header: "#",
+                  render: (row: TokenHolder) => row.rank,
+                  className: "w-14",
+                },
                 {
                   key: "address",
                   header: "Address",
@@ -206,9 +217,7 @@ export function TokenPage() {
               getRowKey={(row: TokenHolder) => `${row.address}-${row.rank}`}
             />
           </div>
-          {isRefreshing ? (
-            <p className="mt-2 text-xs text-slate-500">Refreshing holders…</p>
-          ) : null}
+          {isRefreshing ? <p className="mt-2 text-xs text-slate-500">Refreshing holders…</p> : null}
           <div className="mt-4 flex items-center justify-between text-sm text-slate-400">
             <button
               type="button"

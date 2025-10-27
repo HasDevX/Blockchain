@@ -32,7 +32,7 @@ const loginMock = login as unknown as ReturnType<typeof vi.fn>;
 
 function renderLogin(initialPath = "/login", state?: unknown) {
   return render(
-    <MemoryRouter initialEntries={[{ pathname: initialPath, state }]}> 
+    <MemoryRouter initialEntries={[{ pathname: initialPath, state }]}>
       <SWRConfig value={{ provider: () => new Map() }}>
         <AuthProvider>
           <Routes>
@@ -52,7 +52,10 @@ describe("LoginPage", () => {
   });
 
   it("redirects to admin after successful login", async () => {
-    loginMock.mockResolvedValueOnce({ token: "test-token", user: { email: "admin", roles: ["admin"] } });
+    loginMock.mockResolvedValueOnce({
+      token: "test-token",
+      user: { email: "admin", roles: ["admin"] },
+    });
 
     renderLogin();
 
@@ -63,7 +66,10 @@ describe("LoginPage", () => {
     });
 
     await waitFor(() => {
-      expect(loginMock).toHaveBeenCalledWith({ email: "admin@explorertoken.dev", password: "supersecret" });
+      expect(loginMock).toHaveBeenCalledWith({
+        email: "admin@explorertoken.dev",
+        password: "supersecret",
+      });
     });
 
     await screen.findByText(/admin dashboard/i);

@@ -7,7 +7,12 @@ import { useSWRConfig } from "swr";
 import { Alert, AlertVariant } from "../components/Alert";
 
 function resolveRedirectPath(state: unknown): string {
-  if (state && typeof state === "object" && "from" in state && typeof (state as { from?: unknown }).from === "string") {
+  if (
+    state &&
+    typeof state === "object" &&
+    "from" in state &&
+    typeof (state as { from?: unknown }).from === "string"
+  ) {
     return (state as { from: string }).from;
   }
 
@@ -24,7 +29,9 @@ export function LoginPage() {
   const [email, setEmail] = useState("admin@explorertoken.dev");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [formError, setFormError] = useState<{ message: string; variant: AlertVariant } | null>(null);
+  const [formError, setFormError] = useState<{ message: string; variant: AlertVariant } | null>(
+    null,
+  );
 
   useEffect(() => {
     if (token) {
@@ -46,7 +53,10 @@ export function LoginPage() {
     } catch (error) {
       if (error instanceof ApiError) {
         if (error.status === 401) {
-          setFormError({ message: "Invalid email or password. Please try again.", variant: "error" });
+          setFormError({
+            message: "Invalid email or password. Please try again.",
+            variant: "error",
+          });
         } else if (error.status === 429) {
           setFormError({ message: "Rate limited — try again in a moment.", variant: "warning" });
         } else {

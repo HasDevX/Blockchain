@@ -21,7 +21,9 @@ export interface NormalizedTokenInfo {
 }
 
 export class EtherscanClient {
-  constructor(private readonly apiKey?: string) {}
+  constructor(private readonly apiKey?: string) {
+    void this.apiKey;
+  }
 
   async getTokenInfo(_chainId: number, address: string): Promise<NormalizedTokenInfo | null> {
     const fallback: TokenInfoResponse = {

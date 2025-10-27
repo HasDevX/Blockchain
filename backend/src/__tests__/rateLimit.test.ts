@@ -132,7 +132,9 @@ describe("createRateLimiters", () => {
     expect(typeof storeOptions.sendCommand).toBe("function");
     expect(storeOptions.prefix).toBe("rl:login");
 
-    expect(warnSpy).not.toHaveBeenCalledWith("[rate-limit] REDIS_URL not set; using in-memory limiter");
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      "[rate-limit] REDIS_URL not set; using in-memory limiter",
+    );
   });
 
   it("falls back to in-memory store when REDIS_URL is missing", async () => {

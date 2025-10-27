@@ -17,7 +17,14 @@ interface TableProps<T> {
   getRowKey?: (row: T, index: number) => string | number;
 }
 
-export function Table<T>({ columns, data, emptyState, isLoading = false, loadingState, getRowKey }: TableProps<T>) {
+export function Table<T>({
+  columns,
+  data,
+  emptyState,
+  isLoading = false,
+  loadingState,
+  getRowKey,
+}: TableProps<T>) {
   const columnCount = columns.length || 1;
   const showEmpty = !isLoading && !data.length && emptyState;
 
@@ -60,7 +67,10 @@ export function Table<T>({ columns, data, emptyState, isLoading = false, loading
                 return (
                   <tr key={rowKey} className="hover:bg-slate-900/40">
                     {columns.map((column) => (
-                      <td key={column.key} className={clsx("px-4 py-3 text-sm text-slate-200", column.className)}>
+                      <td
+                        key={column.key}
+                        className={clsx("px-4 py-3 text-sm text-slate-200", column.className)}
+                      >
                         {column.render(row)}
                       </td>
                     ))}

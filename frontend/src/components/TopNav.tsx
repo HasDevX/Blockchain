@@ -27,9 +27,14 @@ export function TopNav({ onGlobalSearch, actions }: TopNavProps) {
             <span className="rounded-lg bg-primary-500/20 px-2 py-1 text-sm uppercase tracking-wider text-primary-200">
               ExplorerToken
             </span>
-            <span className="hidden text-sm text-slate-500 md:inline">Multi-chain token explorer</span>
+            <span className="hidden text-sm text-slate-500 md:inline">
+              Multi-chain token explorer
+            </span>
           </div>
-          <form onSubmit={handleSubmit} className="hidden items-center gap-2 rounded-full border border-slate-800 bg-slate-900/70 px-3 py-1 md:flex">
+          <form
+            onSubmit={handleSubmit}
+            className="hidden items-center gap-2 rounded-full border border-slate-800 bg-slate-900/70 px-3 py-1 md:flex"
+          >
             <MagnifyingGlassIcon className="h-4 w-4 text-slate-500" />
             <input
               type="search"
@@ -40,7 +45,9 @@ export function TopNav({ onGlobalSearch, actions }: TopNavProps) {
             />
           </form>
         </div>
-        <div className={clsx("flex flex-wrap items-center gap-3", actions ? "" : "hidden md:flex")}>{actions}</div>
+        <div className={clsx("flex flex-wrap items-center gap-3", actions ? "" : "hidden md:flex")}>
+          {actions}
+        </div>
       </div>
       <div className="mx-auto block w-full px-4 pb-4 md:hidden">
         <form

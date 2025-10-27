@@ -20,9 +20,7 @@ describe("token holders endpoint", () => {
   });
 
   it("rejects unsupported chains", async () => {
-    const response = await request(app)
-      .get("/api/token/0xabc123/holders")
-      .query({ chainId: 25 });
+    const response = await request(app).get("/api/token/0xabc123/holders").query({ chainId: 25 });
 
     expect(response.status).toBe(400);
     expect(response.body).toEqual({ error: "unsupported_chain" });

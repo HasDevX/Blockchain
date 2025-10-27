@@ -56,10 +56,12 @@ async function fetchJson<T>(pathname: string, options: RequestOptions = {}): Pro
 }
 
 function normalizeChains(payload: ChainResponse): Chain[] {
-  const rawList: Array<Partial<Chain> & { id: number; supported?: boolean }> = Array.isArray(payload)
+  const rawList: Array<Partial<Chain> & { id: number; supported?: boolean }> = Array.isArray(
+    payload,
+  )
     ? (payload as Array<Partial<Chain> & { id: number; supported?: boolean }>)
     : Array.isArray((payload as { chains?: Chain[] }).chains)
-      ? ((payload as { chains: Array<Partial<Chain> & { id: number; supported?: boolean }> }).chains)
+      ? (payload as { chains: Array<Partial<Chain> & { id: number; supported?: boolean }> }).chains
       : [];
 
   return mergeChainMetadata(rawList);
@@ -103,9 +105,10 @@ export async function fetchTokenHolders(
   return fetchJson<TokenHoldersPayload>(path);
 }
 
-export async function login(
-  credentials: { email: string; password: string },
-): Promise<{ token: string; user: { email: string; roles: string[] } }> {
+export async function login(credentials: {
+  email: string;
+  password: string;
+}): Promise<{ token: string; user: { email: string; roles: string[] } }> {
   return fetchJson("/auth/login", {
     method: "POST",
     body: JSON.stringify(credentials),

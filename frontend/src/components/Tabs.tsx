@@ -14,7 +14,11 @@ interface TabsProps {
 
 export function Tabs({ value, options, onChange, ariaLabel }: TabsProps) {
   return (
-    <div className="flex gap-2 rounded-full bg-slate-900/60 p-1" role="tablist" aria-label={ariaLabel}>
+    <div
+      className="flex gap-2 rounded-full bg-slate-900/60 p-1"
+      role="tablist"
+      aria-label={ariaLabel}
+    >
       {options.map((option) => (
         <button
           key={option.key}

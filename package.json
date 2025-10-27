@@ -4,7 +4,7 @@
   "private": true,
   "workspaces": ["frontend", "backend"],
   "scripts": {
-    "lint": "eslint \"{backend,frontend}/**/*.{ts,tsx,js,jsx}\"",
+    "lint": "npm run lint --workspaces",
     "format": "prettier --write .",
     "typecheck": "npm run typecheck --workspaces",
     "build": "npm run build --workspaces"

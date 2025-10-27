@@ -11,7 +11,12 @@ interface StatCardProps {
 
 export function StatCard({ label, value, hint, icon, className }: StatCardProps) {
   return (
-    <div className={clsx("rounded-xl border border-slate-800 bg-surface-light/40 p-4 shadow-subtle", className)}>
+    <div
+      className={clsx(
+        "rounded-xl border border-slate-800 bg-surface-light/40 p-4 shadow-subtle",
+        className,
+      )}
+    >
       <div className="flex items-start justify-between">
         <div>
           <p className="text-sm text-slate-400">{label}</p>

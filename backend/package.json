@@ -9,7 +9,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "migrate": "ts-node scripts/run-migrations.ts"
+    "migrate": "ts-node scripts/run-migrations.ts",
+    "lint": "eslint --max-warnings=0 --ext .ts ./src ./scripts && prettier --check \"src/**/*.ts\" \"scripts/**/*.ts\""
   },
   "dependencies": {
     "cors": "^2.8.5",

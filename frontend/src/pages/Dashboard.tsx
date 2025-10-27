@@ -111,7 +111,8 @@ export function DashboardPage({
           <div className="flex flex-col gap-2">
             <h1 className="text-2xl font-semibold text-slate-100">Explorer dashboard</h1>
             <p className="text-sm text-slate-400">
-              {supportedCount} supported networks are live. Cronos (25) stays visible with an Unsupported badge so the team can surface it without enabling traffic yet.
+              {supportedCount} supported networks are live. Cronos (25) stays visible with an
+              Unsupported badge so the team can surface it without enabling traffic yet.
             </p>
           </div>
           <div className="mt-5">
@@ -125,7 +126,9 @@ export function DashboardPage({
             <input
               type="text"
               value={searchValue}
-              onChange={(event: ChangeEvent<HTMLInputElement>) => setSearchValue(event.target.value)}
+              onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                setSearchValue(event.target.value)
+              }
               placeholder="Search address or token (0x... or 137:0x...)"
               className="flex-1 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 shadow-inner focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500/40"
             />

@@ -33,14 +33,7 @@ export function loadEnv(): AppEnv {
     return cachedEnv;
   }
 
-  const {
-    NODE_ENV,
-    PORT,
-    DATABASE_URL,
-    REDIS_URL,
-    FRONTEND_URL,
-    ETHERSCAN_API_KEY,
-  } = process.env;
+  const { NODE_ENV, PORT, DATABASE_URL, REDIS_URL, FRONTEND_URL, ETHERSCAN_API_KEY } = process.env;
 
   cachedEnv = {
     nodeEnv: NODE_ENV ?? "development",

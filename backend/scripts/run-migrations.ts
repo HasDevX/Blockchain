@@ -13,7 +13,9 @@ async function ensureMigrationsTable(client: PoolClient) {
 }
 
 async function runMigration(client: PoolClient, filePath: string, filename: string) {
-  const alreadyApplied = await client.query("SELECT 1 FROM schema_migrations WHERE filename = $1", [filename]);
+  const alreadyApplied = await client.query("SELECT 1 FROM schema_migrations WHERE filename = $1", [
+    filename,
+  ]);
 
   if (alreadyApplied.rowCount) {
     console.info(`Skipping ${filename}`);
@@ -50,7 +52,9 @@ async function main() {
     await ensureMigrationsTable(client);
 
     const migrationsDir = path.resolve(__dirname, "../migrations");
-  const files = (await readdir(migrationsDir)).filter((file: string) => file.endsWith(".sql")).sort();
+    const files = (await readdir(migrationsDir))
+      .filter((file: string) => file.endsWith(".sql"))
+      .sort();
 
     for (const filename of files) {
       const filePath = path.join(migrationsDir, filename);

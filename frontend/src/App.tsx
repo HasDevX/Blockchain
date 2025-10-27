@@ -18,7 +18,9 @@ function Shell() {
 
   useEffect(() => {
     if (chains && chains.length && selectedChains.length === 0) {
-      const supported = chains.filter((chain: Chain) => chain.supported).map((chain: Chain) => chain.id);
+      const supported = chains
+        .filter((chain: Chain) => chain.supported)
+        .map((chain: Chain) => chain.id);
       setSelectedChains(supported);
     }
   }, [chains, selectedChains.length]);
@@ -28,7 +30,7 @@ function Shell() {
       return selectedChains[0];
     }
 
-  const firstSupported = chains?.find((chain: Chain) => chain.supported)?.id;
+    const firstSupported = chains?.find((chain: Chain) => chain.supported)?.id;
     return firstSupported ?? 137;
   }, [chains, selectedChains]);
 
@@ -95,7 +97,10 @@ function Shell() {
               />
             }
           />
-          <Route path="/token/:address" element={<TokenPage key={`${location.pathname}${location.search}`} />} />
+          <Route
+            path="/token/:address"
+            element={<TokenPage key={`${location.pathname}${location.search}`} />}
+          />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/admin" element={<AdminSettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

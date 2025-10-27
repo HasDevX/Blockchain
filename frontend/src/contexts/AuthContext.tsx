@@ -1,5 +1,16 @@
-import { createContext, PropsWithChildren, useCallback, useContext, useMemo, useState } from "react";
-import { clearAuthToken as clearStoredToken, getAuthToken, setAuthToken as storeToken } from "../lib/auth";
+import {
+  createContext,
+  PropsWithChildren,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+} from "react";
+import {
+  clearAuthToken as clearStoredToken,
+  getAuthToken,
+  setAuthToken as storeToken,
+} from "../lib/auth";
 
 type AuthContextValue = {
   token: string | null;

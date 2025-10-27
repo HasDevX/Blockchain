@@ -50,9 +50,15 @@ export function AdminPage() {
         if (err.status === 401) {
           setLoginError({ message: "Invalid email or password.", variant: "error" });
         } else if (err.status === 429) {
-          setLoginError({ message: "Too many attempts. Wait a moment and try again.", variant: "warning" });
+          setLoginError({
+            message: "Too many attempts. Wait a moment and try again.",
+            variant: "warning",
+          });
         } else {
-          setLoginError({ message: "Unable to sign in right now. Please retry.", variant: "error" });
+          setLoginError({
+            message: "Unable to sign in right now. Please retry.",
+            variant: "error",
+          });
         }
       } else {
         console.error(err);
@@ -169,7 +175,9 @@ export function AdminPage() {
           </div>
           <div>
             <span className="text-slate-500">Announcement</span>
-            <p className="mt-1 text-slate-300">{data?.settings.announcement ?? "No active announcements."}</p>
+            <p className="mt-1 text-slate-300">
+              {data?.settings.announcement ?? "No active announcements."}
+            </p>
           </div>
         </div>
       </div>

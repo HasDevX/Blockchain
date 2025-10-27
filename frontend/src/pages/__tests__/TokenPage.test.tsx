@@ -49,16 +49,27 @@ describe("TokenPage", () => {
     };
 
     const holders: TokenHolder[] = [
-      { rank: 1, address: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd", balance: "1000", percentage: 12.34 },
+      {
+        rank: 1,
+        address: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+        balance: "1000",
+        percentage: 12.34,
+      },
       { rank: 2, address: "0x123", balance: "500", percentage: 6.17 },
     ];
 
     mockUseToken.mockReturnValue({ data: tokenSummary, isLoading: false, error: null });
-    mockUseTokenHolders.mockReturnValue({ data: { items: holders, nextCursor: "25" }, isLoading: false, error: null });
+    mockUseTokenHolders.mockReturnValue({
+      data: { items: holders, nextCursor: "25" },
+      isLoading: false,
+      error: null,
+    });
 
     await act(async () => {
       render(
-        <MemoryRouter initialEntries={["/token/0xABCDEFabcdefabcdefabcdefabcdefabcdefABCD?chainId=137"]}>
+        <MemoryRouter
+          initialEntries={["/token/0xABCDEFabcdefabcdefabcdefabcdefabcdefABCD?chainId=137"]}
+        >
           <Routes>
             <Route path="/token/:address" element={<TokenPage />} />
           </Routes>
@@ -73,7 +84,7 @@ describe("TokenPage", () => {
     expect(lastCall?.[1]).toBe("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd");
     expect(lastCall?.[2]).toMatchObject({ cursor: null, limit: 25 });
 
-  const holdersTab = screen.getByRole("tab", { name: /holders/i });
+    const holdersTab = screen.getByRole("tab", { name: /holders/i });
     await act(async () => {
       await userEvent.click(holdersTab);
     });

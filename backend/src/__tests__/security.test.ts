@@ -44,15 +44,15 @@ describe("security middleware", () => {
     const rootResponse = await request(app).get("/health");
     expect(rootResponse.status).toBe(200);
     expect(rootResponse.body.ok).toBe(true);
-  expect(rootResponse.body.version).toMatch(/^[0-9a-f]{7,12}$/);
-  expect(rootResponse.body.version).toBe(EXPECTED_GIT_SHA);
+    expect(rootResponse.body.version).toMatch(/^[0-9a-f]{7,12}$/);
+    expect(rootResponse.body.version).toBe(EXPECTED_GIT_SHA);
     expect(typeof rootResponse.body.uptime).toBe("number");
 
     const apiResponse = await request(app).get("/api/health");
     expect(apiResponse.status).toBe(200);
     expect(apiResponse.body.ok).toBe(true);
-  expect(apiResponse.body.version).toMatch(/^[0-9a-f]{7,12}$/);
-  expect(apiResponse.body.version).toBe(EXPECTED_GIT_SHA);
+    expect(apiResponse.body.version).toMatch(/^[0-9a-f]{7,12}$/);
+    expect(apiResponse.body.version).toBe(EXPECTED_GIT_SHA);
     expect(typeof apiResponse.body.uptime).toBe("number");
   });
 

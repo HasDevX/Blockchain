@@ -28,7 +28,10 @@ export interface TokenHoldersResponse {
   nextCursor: string | null;
 }
 
-export async function getTokenSummary(chainId: number, tokenAddress: string): Promise<TokenSummary | null> {
+export async function getTokenSummary(
+  chainId: number,
+  tokenAddress: string,
+): Promise<TokenSummary | null> {
   const chain = getChainById(chainId);
 
   if (!chain) {
