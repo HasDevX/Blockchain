@@ -17,10 +17,12 @@ interface CursorEntry {
 class MockPool {
   private cursor: CursorEntry | null = null;
   private holders: HolderEntry[] = [];
+  queries: string[] = [];
 
   reset() {
     this.cursor = null;
     this.holders = [];
+    this.queries = [];
   }
 
   setCursor(entry: CursorEntry) {
@@ -42,6 +44,8 @@ class MockPool {
   }
 
   async query(text: string, params: unknown[]) {
+    this.queries.push(text);
+
     if (text.includes("FROM token_index_cursor")) {
       return this.handleCursorQuery(params);
     }
@@ -185,10 +189,16 @@ function bufferToHex(buffer: Buffer): string {
 
 describe("getTokenHolders", () => {
   const mockPool = new MockPool();
+  let redisClientMock: null | { get: ReturnType<typeof vi.fn>; set: ReturnType<typeof vi.fn> };
+  let getRedisClientMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.resetModules();
     mockPool.reset();
+    mockPool.queries = [];
+
+    redisClientMock = null;
+    getRedisClientMock = vi.fn(() => Promise.resolve(redisClientMock));
 
     process.env.ADMIN_EMAIL = "admin@example.com";
     process.env.ADMIN_PASSWORD = "password";
@@ -196,6 +206,10 @@ describe("getTokenHolders", () => {
 
     vi.doMock("../lib/db", () => ({
       getPool: () => mockPool,
+    }));
+
+    vi.doMock("../lib/redisClient", () => ({
+      getRedisClient: getRedisClientMock,
     }));
   });
 
@@ -278,5 +292,56 @@ describe("getTokenHolders", () => {
     await expect(
       getTokenHolders({ chainId: 25, address: "0xabc", cursor: null, limit: 10 }),
     ).rejects.toBeInstanceOf(UnsupportedChainError);
+  });
+
+  it("uses Redis cache when available", async () => {
+    redisClientMock = {
+      get: vi.fn().mockResolvedValue(null),
+      set: vi.fn().mockResolvedValue("OK"),
+    };
+    getRedisClientMock.mockImplementation(() => Promise.resolve(redisClientMock));
+
+    mockPool.setCursor({
+      chainId: 1,
+      token: "0x0000000000000000000000000000000000000abc",
+      fromBlock: "0",
+      toBlock: "10",
+    });
+
+    mockPool.setHolders([
+      {
+        chainId: 1,
+        token: "0x0000000000000000000000000000000000000abc",
+        holder: "0x0000000000000000000000000000000000000011",
+        balance: "100",
+      },
+    ]);
+
+    const { getTokenHolders } = await import("../services/tokenService");
+    const querySpy = vi.spyOn(mockPool as unknown as { query: MockPool["query"] }, "query");
+
+    const first = await getTokenHolders({
+      chainId: 1,
+      address: "0x0000000000000000000000000000000000000abc",
+      cursor: null,
+      limit: 10,
+    });
+
+    expect(redisClientMock?.set).toHaveBeenCalledTimes(1);
+    expect(first.items).toHaveLength(1);
+
+    querySpy.mockClear();
+    redisClientMock?.get.mockResolvedValueOnce(JSON.stringify(first));
+
+    const second = await getTokenHolders({
+      chainId: 1,
+      address: "0x0000000000000000000000000000000000000abc",
+      cursor: null,
+      limit: 10,
+    });
+
+    expect(redisClientMock?.get).toHaveBeenCalled();
+    expect(querySpy).not.toHaveBeenCalled();
+    expect(second).toEqual(first);
   });
 });

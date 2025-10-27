@@ -81,7 +81,7 @@ export function TokenPage() {
           message: "Something went wrong while fetching holders. Please retry shortly.",
         }
     : null;
-  const indexingMessage = "Indexing holders… check back shortly.";
+  const indexingMessage = "Indexing holders… this can take a few minutes.";
   const indexingAlert =
     !holdersAlert && isIndexing
       ? {

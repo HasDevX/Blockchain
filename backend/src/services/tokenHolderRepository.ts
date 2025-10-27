@@ -85,10 +85,12 @@ export async function enqueueReindex(
   queryable: Queryable,
   chainId: number,
   tokenAddress: string,
-  fromBlock: bigint,
+  fromBlock?: bigint | null,
 ): Promise<void> {
   const normalized = normalizeAddress(tokenAddress);
   const tokenBuffer = addressToBuffer(normalized);
+  const fromBlockValue =
+    fromBlock !== undefined && fromBlock !== null ? fromBlock.toString() : null;
 
   await queryable.query(
     `INSERT INTO token_index_cursor (chain_id, token, from_block, to_block, updated_at)
@@ -98,6 +100,6 @@ export async function enqueueReindex(
        SET from_block = EXCLUDED.from_block,
            to_block = NULL,
            updated_at = NOW()`,
-    [chainId, tokenBuffer, fromBlock.toString()],
+    [chainId, tokenBuffer, fromBlockValue],
   );
 }

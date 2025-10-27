@@ -40,7 +40,7 @@ export interface TokenHolder {
 export interface TokenHoldersPayload {
   items: TokenHolder[];
   nextCursor?: string;
-  status: "ok" | "indexing";
+  status?: "ok" | "indexing";
 }
 
 export interface AdminSettings {

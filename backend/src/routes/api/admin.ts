@@ -49,26 +49,6 @@ export function createAdminRouter(adminLimiter: RateLimitRequestHandler) {
       return;
     }
 
-    if (!Number.isFinite(fromBlock) && typeof fromBlock !== "string") {
-      res.status(400).json({ error: "invalid_from_block" });
-      return;
-    }
-
-    let startBlock: bigint;
-
-    try {
-      startBlock = BigInt(fromBlock);
-    } catch (error) {
-      console.warn("invalid fromBlock", error);
-      res.status(400).json({ error: "invalid_from_block" });
-      return;
-    }
-
-    if (startBlock < 0n) {
-      res.status(400).json({ error: "invalid_from_block" });
-      return;
-    }
-
     let normalizedToken: string;
 
     try {
@@ -79,6 +59,23 @@ export function createAdminRouter(adminLimiter: RateLimitRequestHandler) {
       return;
     }
 
+    let startBlock: bigint | null = null;
+
+    if (fromBlock !== undefined && fromBlock !== null && `${fromBlock}`.trim().length > 0) {
+      try {
+        startBlock = BigInt(fromBlock);
+      } catch (error) {
+        console.warn("invalid fromBlock", error);
+        res.status(400).json({ error: "invalid_from_block" });
+        return;
+      }
+
+      if (startBlock < 0n) {
+        res.status(400).json({ error: "invalid_from_block" });
+        return;
+      }
+    }
+
     try {
       await enqueueReindex(getPool(), Number(chainId), normalizedToken, startBlock);
     } catch (error) {
@@ -87,12 +84,7 @@ export function createAdminRouter(adminLimiter: RateLimitRequestHandler) {
       return;
     }
 
-    res.status(202).json({
-      chainId: Number(chainId),
-      token: normalizedToken,
-      fromBlock: startBlock.toString(),
-      status: "queued",
-    });
+    res.status(202).json({ ok: true });
   });
 
   return router;

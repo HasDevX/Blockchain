@@ -3,6 +3,7 @@ import { CHAINS, getChainById } from "../config/chains";
 import { getChainAdapter } from "../config/chainAdapters";
 import { loadEnv } from "../config/env";
 import { getPool } from "../lib/db";
+import { getRedisClient } from "../lib/redisClient";
 import { EtherscanClient } from "../vendors/etherscanClient";
 import { addressToBuffer, bufferToAddress, normalizeAddress } from "./holderStore";
 import { getTokenCursor } from "./tokenHolderRepository";
@@ -203,6 +204,21 @@ export async function getTokenHolders({
   const cursorData = decodeCursor(cursor ?? null);
   const tokenBuffer = addressToBuffer(normalizedAddress);
   const pool = getPool();
+  const cacheCursorKey = cursor ?? "__origin__";
+  const cacheKey = `holders:${chainId}:${normalizedAddress}:${cacheCursorKey}:${normalizedLimit}`;
+  const redisClient = await getRedisClient(env);
+
+  if (redisClient) {
+    try {
+      const cached = await redisClient.get(cacheKey);
+      if (cached) {
+        const parsed = JSON.parse(cached) as TokenHoldersResponse;
+        return parsed;
+      }
+    } catch (error) {
+      console.warn("failed to read holders cache", error);
+    }
+  }
 
   const cursorRow = await getTokenCursor(pool, chainId, normalizedAddress);
   const status: "ok" | "indexing" = cursorRow && cursorRow.toBlock !== null ? "ok" : "indexing";
@@ -243,11 +259,23 @@ export async function getTokenHolders({
         })
       : undefined;
 
-  return {
+  const response: TokenHoldersResponse = {
     items,
     nextCursor,
     status,
   };
+
+  if (redisClient) {
+    try {
+      await redisClient.set(cacheKey, JSON.stringify(response), {
+        EX: 45,
+      });
+    } catch (error) {
+      console.warn("failed to write holders cache", error);
+    }
+  }
+
+  return response;
 }
 
 export function listChains() {

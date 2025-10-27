@@ -60,9 +60,10 @@ describe("TokenPage", () => {
 
     mockUseToken.mockReturnValue({ data: tokenSummary, isLoading: false, error: null });
     mockUseTokenHolders.mockReturnValue({
-      data: { items: holders, nextCursor: "25" },
+      data: { items: holders, nextCursor: "25", status: "ok" },
       isLoading: false,
       error: null,
+      isValidating: false,
     });
 
     await act(async () => {
@@ -108,5 +109,89 @@ describe("TokenPage", () => {
     });
 
     expect(screen.getByText(/Invalid token path/i)).toBeInTheDocument();
+  });
+
+  it("shows indexing banner when holders are indexing", async () => {
+    const tokenSummary: TokenSummary = {
+      chainId: 1,
+      address: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+      name: "Sample Token",
+      symbol: "SAMP",
+      priceUsd: 1,
+      totalSupply: "1000",
+      holdersCount: 0,
+      supported: true,
+      explorerUrl: "https://example.com",
+    };
+
+    mockUseToken.mockReturnValue({ data: tokenSummary, isLoading: false, error: null });
+    mockUseTokenHolders.mockReturnValue({
+      data: { items: [], status: "indexing" },
+      isLoading: false,
+      error: null,
+      isValidating: true,
+    });
+
+    await act(async () => {
+      render(
+        <MemoryRouter
+          initialEntries={["/token/0xabcdefabcdefabcdefabcdefabcdefabcdefabcd?chainId=1"]}
+        >
+          <Routes>
+            <Route path="/token/:address" element={<TokenPage />} />
+          </Routes>
+        </MemoryRouter>,
+      );
+    });
+
+    const holdersTab = screen.getByRole("tab", { name: /holders/i });
+    await act(async () => {
+      await userEvent.click(holdersTab);
+    });
+
+  const messages = await screen.findAllByText(/Indexing holders… this can take a few minutes/i);
+  const statusMessage = messages.find((node) => node.closest('[role="status"]'));
+  expect(statusMessage).toBeDefined();
+  });
+
+  it("shows empty state message when no status is present", async () => {
+    const tokenSummary: TokenSummary = {
+      chainId: 1,
+      address: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+      name: "Sample Token",
+      symbol: "SAMP",
+      priceUsd: 1,
+      totalSupply: "1000",
+      holdersCount: 0,
+      supported: true,
+      explorerUrl: "https://example.com",
+    };
+
+    mockUseToken.mockReturnValue({ data: tokenSummary, isLoading: false, error: null });
+    mockUseTokenHolders.mockReturnValue({
+      data: { items: [] },
+      isLoading: false,
+      error: null,
+      isValidating: false,
+    });
+
+    await act(async () => {
+      render(
+        <MemoryRouter
+          initialEntries={["/token/0xabcdefabcdefabcdefabcdefabcdefabcdefabcd?chainId=1"]}
+        >
+          <Routes>
+            <Route path="/token/:address" element={<TokenPage />} />
+          </Routes>
+        </MemoryRouter>,
+      );
+    });
+
+    const holdersTab = screen.getByRole("tab", { name: /holders/i });
+    await act(async () => {
+      await userEvent.click(holdersTab);
+    });
+
+    expect(await screen.findByText(/No holder data yet/i)).toBeInTheDocument();
   });
 });
