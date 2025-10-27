@@ -46,14 +46,18 @@ describe("security middleware", () => {
     });
   });
 
-  it("exposes health endpoint", async () => {
-    const response = await request(app).get("/health");
+  it("exposes health endpoints", async () => {
+    const rootResponse = await request(app).get("/health");
+    expect(rootResponse.status).toBe(200);
+    expect(rootResponse.body.ok).toBe(true);
+    expect(rootResponse.body.version).toMatch(/^[0-9a-f]{7,12}$/);
+    expect(typeof rootResponse.body.uptime).toBe("number");
 
-    expect(response.status).toBe(200);
-    expect(response.body.ok).toBe(true);
-    expect(typeof response.body.version).toBe("string");
-    expect(response.body.version).toMatch(/^[0-9a-f]{7,12}$/);
-    expect(typeof response.body.uptime).toBe("number");
+    const apiResponse = await request(app).get("/api/health");
+    expect(apiResponse.status).toBe(200);
+    expect(apiResponse.body.ok).toBe(true);
+    expect(apiResponse.body.version).toMatch(/^[0-9a-f]{7,12}$/);
+    expect(typeof apiResponse.body.uptime).toBe("number");
   });
 
   it("rate limits login endpoint after burst", async () => {

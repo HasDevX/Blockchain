@@ -39,7 +39,9 @@ export async function createApp() {
 
   const rateLimiters = await createRateLimiters(env);
 
-  app.use(createHealthRouter());
+  const healthRouter = createHealthRouter();
+  app.use(healthRouter);
+  app.use("/api", healthRouter);
   app.use("/api", createStrictCors(env), createApiRouter(rateLimiters));
 
   app.use(notFoundHandler);
