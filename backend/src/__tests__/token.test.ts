@@ -1,56 +1,141 @@
-import request from "supertest";
-import { beforeAll, describe, expect, it } from "vitest";
-import { createApp } from "../app";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-let app: Awaited<ReturnType<typeof createApp>>;
+const redisStore = new Map<string, string>();
+const redisClientMock = {
+  get: vi.fn(async (key: string) => redisStore.get(key) ?? null),
+  set: vi.fn(async (key: string, value: string) => {
+    redisStore.set(key, value);
+    return "OK";
+  }),
+};
+const getRedisClientMock = vi.fn(async () => redisClientMock);
 
-beforeAll(async () => {
-  process.env.NODE_ENV = "test";
-  process.env.FRONTEND_URL = "http://localhost:5173";
-  process.env.REDIS_URL = "";
-  app = await createApp();
-});
+vi.mock("../lib/redisClient", () => ({
+  getRedisClient: getRedisClientMock,
+}));
 
-describe("token holders endpoint", () => {
-  it("requires a chainId query parameter", async () => {
-    const response = await request(app).get("/api/token/0xabc123/holders");
+describe("getTokenHolders", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
 
-    expect(response.status).toBe(400);
-    expect(response.body).toEqual({ error: "missing_chain" });
+  beforeEach(() => {
+    vi.resetModules();
+    redisStore.clear();
+    redisClientMock.get.mockClear();
+    redisClientMock.set.mockClear();
+    getRedisClientMock.mockClear();
+
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
   });
 
-  it("rejects unsupported chains", async () => {
-    const response = await request(app).get("/api/token/0xabc123/holders").query({ chainId: 25 });
-
-    expect(response.status).toBe(400);
-    expect(response.body).toEqual({ error: "unsupported_chain" });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.POLYGONSCAN_API_KEY;
   });
 
-  it("returns a holders payload for supported chains", async () => {
-    const response = await request(app)
-      .get("/api/token/0xabcdefabcdefabcdefabcdefabcdefabcdefabcd/holders")
-      .query({ chainId: 137 });
+  it("normalizes polygon holders using the etherscan adapter", async () => {
+    process.env.POLYGONSCAN_API_KEY = "polygon-test-key";
 
-    expect(response.status).toBe(200);
-    expect(Array.isArray(response.body.items)).toBe(true);
-    expect(response.body.items).toHaveLength(25);
-    expect(response.body.nextCursor).toBe("25");
-    expect(response.body.items[0]).toMatchObject({ rank: 1 });
-    expect(typeof response.body.items[0].balance).toBe("string");
-    expect(typeof response.body.items[0].percentage).toBe("number");
-    expect(typeof response.body.items[0].address).toBe("string");
-    expect(response.body.items[0].address.startsWith("0x")).toBe(true);
-    expect(response.body.items[0].address).toHaveLength(42);
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status: "1",
+        message: "OK",
+        result: [
+          {
+            TokenHolderAddress: "0xholder1",
+            TokenHolderQuantity: "5000",
+            TokenHolderRank: "1",
+            TokenHolderPercentage: "50.12",
+          },
+          {
+            TokenHolderAddress: "0xholder2",
+            TokenHolderQuantity: "4000",
+            TokenHolderRank: "2",
+            TokenHolderPercentage: "40.01",
+          },
+        ],
+      }),
+    } as unknown as Response);
+
+    const { getTokenHolders } = await import("../services/tokenService");
+
+    const result = await getTokenHolders({
+      chainId: 137,
+      address: "0xABCDEFabcdefabcdefabcdefabcdefabcdefABCD",
+      limit: 2,
+      cursor: null,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const requestUrl = fetchMock.mock.calls[0]?.[0] as URL;
+    expect(requestUrl.origin + requestUrl.pathname).toBe("https://api.polygonscan.com/api");
+    expect(requestUrl.searchParams.get("contractaddress")).toBe(
+      "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+    );
+    expect(requestUrl.searchParams.get("page")).toBe("1");
+    expect(requestUrl.searchParams.get("offset")).toBe("2");
+    expect(requestUrl.searchParams.get("apikey")).toBe("polygon-test-key");
+
+    expect(result.items).toEqual([
+      { rank: 1, holder: "0xholder1", balance: "5000", pct: 50.12 },
+      { rank: 2, holder: "0xholder2", balance: "4000", pct: 40.01 },
+    ]);
+    expect(result.nextCursor).toBe("2");
   });
 
-  it("supports cursor pagination", async () => {
-    const response = await request(app)
-      .get("/api/token/0xabcdefabcdefabcdefabcdefabcdefabcdefabcd/holders")
-      .query({ chainId: 137, cursor: 10, limit: 10 });
+  it("rejects Cronos requests with an UnsupportedChainError", async () => {
+    const { getTokenHolders, UnsupportedChainError } = await import("../services/tokenService");
 
-    expect(response.status).toBe(200);
-    expect(response.body.items[0]).toMatchObject({ rank: 11 });
-    expect(response.body.items).toHaveLength(10);
-    expect(response.body.nextCursor).toBe("20");
+    await expect(
+      getTokenHolders({ chainId: 25, address: "0xabc", cursor: null, limit: 10 }),
+    ).rejects.toBeInstanceOf(UnsupportedChainError);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("serves cached results on subsequent requests", async () => {
+    process.env.POLYGONSCAN_API_KEY = "polygon-test-key";
+
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status: "1",
+        message: "OK",
+        result: [
+          {
+            TokenHolderAddress: "0xholder1",
+            TokenHolderQuantity: "5000",
+            TokenHolderRank: "1",
+            TokenHolderPercentage: "50.12",
+          },
+        ],
+      }),
+    } as unknown as Response);
+
+    const { getTokenHolders } = await import("../services/tokenService");
+
+    const first = await getTokenHolders({
+      chainId: 137,
+      address: "0xabc",
+      cursor: null,
+      limit: 25,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(redisClientMock.set).toHaveBeenCalled();
+
+    fetchMock.mockClear();
+
+    const second = await getTokenHolders({
+      chainId: 137,
+      address: "0xabc",
+      cursor: null,
+      limit: 25,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(second).toEqual(first);
+    expect(redisClientMock.get).toHaveBeenCalledTimes(2);
   });
 });

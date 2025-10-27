@@ -32,14 +32,14 @@ export interface TokenSummary {
 
 export interface TokenHolder {
   rank: number;
-  address: string;
+  holder: string;
   balance: string;
-  percentage: number;
+  pct: number;
 }
 
 export interface TokenHoldersPayload {
   items: TokenHolder[];
-  nextCursor: string | null;
+  nextCursor?: string;
 }
 
 export interface AdminSettings {

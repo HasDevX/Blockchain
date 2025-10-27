@@ -1,5 +1,9 @@
 import { Request, Response, Router } from "express";
-import { getTokenHolders, getTokenSummary } from "../../services/tokenService";
+import {
+  getTokenHolders,
+  getTokenSummary,
+  UnsupportedChainError,
+} from "../../services/tokenService";
 
 function parseChainId(param: string): number | null {
   const chainId = Number(param);
@@ -31,7 +35,7 @@ export function createTokensRouter() {
     res.json({ token });
   });
 
-  router.get("/:chainId/:address/holders", (req: Request, res: Response) => {
+  router.get("/:chainId/:address/holders", async (req: Request, res: Response) => {
     const chainId = parseChainId(req.params.chainId);
 
     if (!chainId) {
@@ -43,17 +47,32 @@ export function createTokensRouter() {
     const cursor = (req.query.cursor as string | undefined) ?? null;
     const limit = Math.max(1, Math.min(100, limitParam ? Number(limitParam) : 25));
 
-    const holders = getTokenHolders(chainId, req.params.address, cursor, limit);
+    try {
+      const holders = await getTokenHolders({
+        chainId,
+        address: req.params.address,
+        cursor,
+        limit,
+      });
 
-    if (!holders) {
-      res.status(404).json({ error: "token_not_found" });
-      return;
+      const payload: { items: typeof holders.items; nextCursor?: string } = {
+        items: holders.items,
+      };
+
+      if (holders.nextCursor) {
+        payload.nextCursor = holders.nextCursor;
+      }
+
+      res.json(payload);
+    } catch (error) {
+      if (error instanceof UnsupportedChainError) {
+        res.status(400).json({ error: "unsupported_chain" });
+        return;
+      }
+
+      console.error("Failed to fetch token holders", error);
+      res.status(502).json({ error: "vendor_unavailable" });
     }
-
-    res.json({
-      items: holders.items,
-      nextCursor: holders.nextCursor,
-    });
   });
 
   return router;

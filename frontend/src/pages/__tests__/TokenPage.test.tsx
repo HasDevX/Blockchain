@@ -51,11 +51,11 @@ describe("TokenPage", () => {
     const holders: TokenHolder[] = [
       {
         rank: 1,
-        address: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+        holder: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
         balance: "1000",
-        percentage: 12.34,
+        pct: 12.34,
       },
-      { rank: 2, address: "0x123", balance: "500", percentage: 6.17 },
+      { rank: 2, holder: "0x123", balance: "500", pct: 6.17 },
     ];
 
     mockUseToken.mockReturnValue({ data: tokenSummary, isLoading: false, error: null });

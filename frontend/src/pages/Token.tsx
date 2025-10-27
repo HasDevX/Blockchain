@@ -79,16 +79,17 @@ export function TokenPage() {
         }
     : null;
 
-  const hasNext = Boolean(holders?.nextCursor);
+  const nextCursor = holders?.nextCursor ?? null;
+  const hasNext = Boolean(nextCursor);
   const hasPrev = cursorHistory.length > 0;
 
   function goToNext() {
-    if (!holders?.nextCursor) {
+    if (!nextCursor) {
       return;
     }
 
     setCursorHistory((prev: Array<string | null>) => [...prev, cursor]);
-    setCursor(holders.nextCursor);
+    setCursor(nextCursor);
   }
 
   function goToPrevious() {
@@ -184,10 +185,10 @@ export function TokenPage() {
                   className: "w-14",
                 },
                 {
-                  key: "address",
+                  key: "holder",
                   header: "Address",
                   render: (row: TokenHolder) => (
-                    <Copyable value={row.address} display={`${row.address.slice(0, 10)}…`} />
+                    <Copyable value={row.holder} display={`${row.holder.slice(0, 10)}…`} />
                   ),
                 },
                 {
@@ -196,9 +197,9 @@ export function TokenPage() {
                   render: (row: TokenHolder) => formatNumber(row.balance),
                 },
                 {
-                  key: "percentage",
+                  key: "pct",
                   header: "%",
-                  render: (row: TokenHolder) => `${row.percentage.toFixed(2)}%`,
+                  render: (row: TokenHolder) => `${row.pct.toFixed(2)}%`,
                   className: "text-right",
                 },
               ]}
@@ -214,7 +215,7 @@ export function TokenPage() {
                   Loading holders…
                 </span>
               }
-              getRowKey={(row: TokenHolder) => `${row.address}-${row.rank}`}
+              getRowKey={(row: TokenHolder) => `${row.holder}-${row.rank}`}
             />
           </div>
           {isRefreshing ? <p className="mt-2 text-xs text-slate-500">Refreshing holders…</p> : null}
