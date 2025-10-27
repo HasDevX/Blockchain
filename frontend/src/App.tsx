@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { SWRConfig } from "swr";
 import { TopNav } from "./components/TopNav";
 import { ChainPills } from "./components/ChainPills";
@@ -12,6 +12,7 @@ import type { Chain } from "./types/api";
 
 function Shell() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { data: chains, isLoading: chainsLoading } = useChains();
   const [selectedChains, setSelectedChains] = useState<number[]>([]);
 
@@ -67,7 +68,8 @@ function Shell() {
         }
       }
 
-      navigate(`/token/${chainId}/${address}`);
+      const encodedAddress = encodeURIComponent(address.trim().toLowerCase());
+      navigate(`/token/${encodedAddress}?chainId=${chainId}`);
     },
     [defaultChainId, navigate],
   );
@@ -93,7 +95,7 @@ function Shell() {
               />
             }
           />
-          <Route path="/token/:chainId/:address" element={<TokenPage />} />
+          <Route path="/token/:address" element={<TokenPage key={`${location.pathname}${location.search}`} />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/admin" element={<AdminSettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

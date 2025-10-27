@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { useToken } from "../hooks/useToken";
 import { useTokenHolders } from "../hooks/useTokenHolders";
 import { Badge } from "../components/Badge";
@@ -20,8 +20,11 @@ const HOLDERS_PAGE_SIZE = 25;
 
 export function TokenPage() {
   const params = useParams();
-  const chainId = params.chainId ? Number(params.chainId) : null;
-  const address = params.address ?? null;
+  const [searchParams] = useSearchParams();
+  const chainParam = searchParams.get("chainId");
+  const parsedChainId = chainParam ? Number(chainParam) : NaN;
+  const chainId = Number.isFinite(parsedChainId) ? parsedChainId : null;
+  const address = params.address ? decodeURIComponent(params.address).toLowerCase() : null;
   const [tab, setTab] = useState<string>("overview");
   const [cursor, setCursor] = useState<string | null>(null);
   const [cursorHistory, setCursorHistory] = useState<Array<string | null>>([]);
@@ -39,7 +42,7 @@ export function TokenPage() {
     return `${token.name} (${token.symbol})`;
   }, [token]);
 
-  if (!chainId || !address) {
+  if (chainId === null || !address) {
     return <div className="text-slate-300">Invalid token path.</div>;
   }
 

@@ -4,6 +4,7 @@ import { authenticateRequest } from "../../middleware/auth";
 import { createAdminRouter } from "./admin";
 import { createAuthRouter } from "./auth";
 import { createChainsRouter } from "./chains";
+import { createTokenRouter } from "./token";
 import { createTokensRouter } from "./tokens";
 
 interface ApiRouterOptions {
@@ -18,6 +19,7 @@ export function createApiRouter({ loginLimiter, adminLimiter }: ApiRouterOptions
 
   router.use("/chains", createChainsRouter());
   router.use("/auth", createAuthRouter(loginLimiter));
+  router.use("/token", createTokenRouter());
   router.use("/tokens", createTokensRouter());
   router.use("/admin", createAdminRouter(adminLimiter));
 

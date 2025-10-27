@@ -60,11 +60,14 @@ export function getTokenHolders(
 ): TokenHoldersResponse | null {
   const chain = getChainById(chainId);
 
-  if (!chain) {
+  if (!chain || !chain.supported) {
     return null;
   }
 
-  const baseSeed = cursor ? Number(cursor) : 0;
+  const normalizedAddress = tokenAddress.toLowerCase();
+
+  const cursorValue = cursor !== null ? Number(cursor) : 0;
+  const baseSeed = Number.isFinite(cursorValue) && cursorValue >= 0 ? Math.floor(cursorValue) : 0;
 
   const items = Array.from({ length: limit }, (_, index) => {
     const rank = baseSeed + index + 1;
@@ -72,7 +75,9 @@ export function getTokenHolders(
 
     return {
       rank,
-      address: `0xholder${suffix}`.padEnd(42, "0"),
+      address: normalizedAddress.startsWith("0x")
+        ? `0x${normalizedAddress.slice(2).padEnd(36, "0").slice(0, 36)}${suffix}`
+        : `0xholder${suffix}`.padEnd(42, "0"),
       balance: (1000000 - rank * 10).toString(),
       percentage: Math.max(0.01, Number((100 / (rank + 10)).toFixed(2))),
     } satisfies TokenHolder;

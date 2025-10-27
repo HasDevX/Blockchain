@@ -86,6 +86,8 @@ export async function fetchTokenHolders(
 ): Promise<TokenHoldersPayload> {
   const searchParams = new URLSearchParams();
 
+  searchParams.set("chainId", String(chainId));
+
   if (params.limit) {
     searchParams.set("limit", String(params.limit));
   }
@@ -95,7 +97,8 @@ export async function fetchTokenHolders(
   }
 
   const query = searchParams.toString();
-  const path = `/tokens/${chainId}/${address}/holders${query ? `?${query}` : ""}`;
+  const normalizedAddress = address.toLowerCase();
+  const path = `/token/${normalizedAddress}/holders${query ? `?${query}` : ""}`;
 
   return fetchJson<TokenHoldersPayload>(path);
 }
