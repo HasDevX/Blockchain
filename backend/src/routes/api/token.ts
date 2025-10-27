@@ -1,6 +1,10 @@
 import { Request, Response, Router } from "express";
 import { getChainById } from "../../config/chains";
-import { getTokenHolders, UnsupportedChainError } from "../../services/tokenService";
+import {
+  EtherscanUpstreamError,
+  getTokenHolders,
+  UnsupportedChainError,
+} from "../../services/tokenService";
 
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
@@ -103,14 +107,36 @@ export function createTokenRouter() {
       }
 
       res.json(payload);
-    } catch (error) {
+    } catch (error: unknown) {
       if (error instanceof UnsupportedChainError) {
         res.status(400).json({ error: "unsupported_chain" });
         return;
       }
 
+      if (error instanceof EtherscanUpstreamError) {
+        const upstream = error;
+        console.error(
+          JSON.stringify({
+            event: "holders.vendor.error",
+            vendor: "etherscan",
+            chainId: upstream.chainId,
+            host: upstream.host,
+            httpStatus: upstream.httpStatus,
+            vendorStatus: upstream.vendorStatus,
+            vendorMessage: upstream.vendorMessage,
+          }),
+        );
+        res.status(502).json({
+          error: "upstream_error",
+          vendor: "etherscan",
+          status: upstream.vendorStatus ?? null,
+          message: upstream.vendorMessage ?? null,
+        });
+        return;
+      }
+
       console.error("Failed to load token holders", error);
-      res.status(502).json({ error: "vendor_unavailable" });
+      res.status(502).json({ error: "upstream_error", vendor: "unknown" });
     }
   });
 

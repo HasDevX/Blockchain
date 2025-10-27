@@ -131,6 +131,47 @@ describe("getTokenHolders", () => {
     expect(headers).toMatchObject({ "X-API-Key": "shared-only-key" });
   });
 
+  it("normalizes v2-style holder payloads from data.items", async () => {
+    process.env.ETHERSCAN_API_KEY = "shared-key";
+
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status: "1",
+        message: "OK",
+        data: {
+          items: [
+            {
+              TokenHolderAddress: "0xholder1",
+              TokenHolderQuantity: "999",
+              TokenHolderPercentage: "12.5",
+            },
+            {
+              TokenHolderAddress: "0xholder2",
+              TokenHolderQuantity: "500",
+            },
+          ],
+        },
+      }),
+    } as unknown as Response);
+
+    const { getTokenHolders } = await import("../services/tokenService");
+
+    const result = await getTokenHolders({
+      chainId: 1,
+      address: "0xabc",
+      cursor: null,
+      limit: 25,
+    });
+
+    expect(result.items).toEqual([
+      { rank: 1, holder: "0xholder1", balance: "999", pct: 12.5 },
+      { rank: 2, holder: "0xholder2", balance: "500", pct: 0 },
+    ]);
+    expect(result.nextCursor).toBeUndefined();
+  });
+
   it("rejects Cronos requests with an UnsupportedChainError", async () => {
     const { getTokenHolders, UnsupportedChainError } = await import("../services/tokenService");
 

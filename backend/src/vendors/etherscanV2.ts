@@ -21,10 +21,56 @@ export interface EtherscanTokenHolderDto {
   TokenHolderPercentage?: string;
 }
 
+export interface EtherscanTokenHolderData {
+  items?: EtherscanTokenHolderDto[];
+  result?: EtherscanTokenHolderDto[];
+  [key: string]: unknown;
+}
+
 export interface EtherscanTokenHolderResponse {
-  status: string;
-  message: string;
+  status?: string;
+  message?: string;
   result?: EtherscanTokenHolderDto[] | string;
+  data?: EtherscanTokenHolderData;
+}
+
+export interface EtherscanVendorResult {
+  host: string;
+  httpStatus: number;
+  payload: EtherscanTokenHolderResponse;
+}
+
+export class EtherscanUpstreamError extends Error {
+  readonly chainId: number;
+  readonly host: string;
+  readonly httpStatus: number;
+  readonly vendorStatus?: string;
+  readonly vendorMessage?: string;
+
+  constructor(params: {
+    chainId: number;
+    host: string;
+    httpStatus: number;
+    vendorStatus?: string;
+    vendorMessage?: string;
+    cause?: unknown;
+  }) {
+    super(
+      `Etherscan upstream error (chain ${params.chainId}, status ${params.httpStatus}): ${
+        params.vendorMessage ?? "unknown"
+      }`,
+    );
+    this.name = "EtherscanUpstreamError";
+    this.chainId = params.chainId;
+    this.host = params.host;
+    this.httpStatus = params.httpStatus;
+    this.vendorStatus = params.vendorStatus;
+    this.vendorMessage = params.vendorMessage;
+    if (params.cause !== undefined) {
+      // @ts-expect-error cause is available in newer runtimes; ignore if unsupported
+      this.cause = params.cause;
+    }
+  }
 }
 
 export function getHostForChain(chainId: number): string {
@@ -91,10 +137,6 @@ async function fetchWithRetry(
     return fetchWithRetry(chainId, url, headers, attempt + 1);
   }
 
-  if (!response.ok) {
-    throw new Error(`Etherscan v2 request failed with status ${response.status}`);
-  }
-
   return response;
 }
 
@@ -104,7 +146,7 @@ export class EtherscanV2Client {
     address: string,
     page: number,
     limit: number,
-  ): Promise<EtherscanTokenHolderResponse> {
+  ): Promise<EtherscanVendorResult> {
     const host = getHostForChain(chainId);
     const apiKey = getApiKeyForChain(chainId);
     const url = createRequestUrl(host, address, page, limit);
@@ -117,7 +159,36 @@ export class EtherscanV2Client {
       headers["X-API-Key"] = apiKey;
     }
 
-    const response = await fetchWithRetry(chainId, url, headers);
-    return (await response.json()) as EtherscanTokenHolderResponse;
+    let response: Response;
+
+    try {
+      response = await fetchWithRetry(chainId, url, headers);
+    } catch (error) {
+      throw new EtherscanUpstreamError({
+        chainId,
+        host,
+        httpStatus: 0,
+        vendorMessage: (error as Error)?.message ?? "request failed",
+        cause: error,
+      });
+    }
+
+    try {
+      const payload = (await response.json()) as EtherscanTokenHolderResponse;
+
+      return {
+        host,
+        httpStatus: response.status,
+        payload,
+      };
+    } catch (error) {
+      throw new EtherscanUpstreamError({
+        chainId,
+        host,
+        httpStatus: response.status,
+        vendorMessage: "invalid_json",
+        cause: error,
+      });
+    }
   }
 }

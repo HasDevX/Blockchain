@@ -4,9 +4,10 @@ import { loadEnv } from "../config/env";
 import { getRedisClient } from "../lib/redisClient";
 import { EtherscanClient } from "../vendors/etherscanClient";
 import {
+  EtherscanUpstreamError,
   EtherscanV2Client,
   type EtherscanTokenHolderDto,
-  type EtherscanTokenHolderResponse,
+  type EtherscanVendorResult,
 } from "../vendors/etherscanV2";
 
 const env = loadEnv();
@@ -180,38 +181,75 @@ async function fetchTokenHoldersFromVendor(
 ): Promise<TokenHoldersResponse> {
   switch (adapter.vendor) {
     case "etherscan": {
-      const response = await etherscanV2Client.getTokenHolders(
+      const vendorResult = await etherscanV2Client.getTokenHolders(
         adapter.chainId,
         address,
         page,
         limit,
       );
 
-      return transformEtherscanResponse(response, page, limit);
+      return transformEtherscanResponse(vendorResult, adapter.chainId, page, limit);
     }
     default:
       throw new Error(`Unsupported vendor ${adapter.vendor}`);
   }
 }
 
+function extractHolderList(result: EtherscanVendorResult): EtherscanTokenHolderDto[] | undefined {
+  if (Array.isArray(result.payload.result)) {
+    return result.payload.result;
+  }
+
+  const data = result.payload.data;
+
+  if (data && typeof data === "object") {
+    const items = (data as { items?: unknown }).items;
+    if (Array.isArray(items)) {
+      return items as EtherscanTokenHolderDto[];
+    }
+
+    const nestedResult = (data as { result?: unknown }).result;
+    if (Array.isArray(nestedResult)) {
+      return nestedResult as EtherscanTokenHolderDto[];
+    }
+  }
+
+  return undefined;
+}
+
+function isNoRecordsMessage(message?: string) {
+  const lower = message?.toLowerCase() ?? "";
+  return lower.includes("no tokens") || lower.includes("no records");
+}
+
 function transformEtherscanResponse(
-  response: EtherscanTokenHolderResponse,
+  vendorResult: EtherscanVendorResult,
+  chainId: number,
   page: number,
   limit: number,
 ): TokenHoldersResponse {
-  if (response.status !== "1" && response.message?.toLowerCase().includes("no tokens found")) {
+  const vendorStatus = vendorResult.payload.status;
+  const vendorMessage = vendorResult.payload.message;
+  const fallbackResultMessage =
+    typeof vendorResult.payload.result === "string" ? vendorResult.payload.result : undefined;
+
+  const holderList = extractHolderList(vendorResult);
+
+  if (holderList) {
+    return normalizeEtherscanPayload(holderList, page, limit);
+  }
+
+  if (isNoRecordsMessage(vendorMessage) || isNoRecordsMessage(fallbackResultMessage)) {
     return { items: [] };
   }
 
-  if (!Array.isArray(response.result)) {
-    if ((response.result as string | undefined)?.toLowerCase().includes("no records")) {
-      return { items: [] };
-    }
-
-    throw new Error(`Unexpected vendor payload: ${response.message ?? "unknown error"}`);
-  }
-
-  return normalizeEtherscanPayload(response.result, page, limit);
+  throw new EtherscanUpstreamError({
+    chainId,
+    host: vendorResult.host,
+    httpStatus: vendorResult.httpStatus,
+    vendorStatus,
+    vendorMessage: vendorMessage ?? fallbackResultMessage ?? "unknown vendor error",
+  });
 }
 
 function buildCacheKey(chainId: number, address: string, cursor: number, limit: number): string {
@@ -288,3 +326,5 @@ export async function getTokenHolders({
 export function listChains() {
   return CHAINS;
 }
+
+export { EtherscanUpstreamError } from "../vendors/etherscanV2";
