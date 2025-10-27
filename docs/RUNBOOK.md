@@ -1,62 +1,102 @@
 # ExplorerToken runbook
 
-This document captures the quick responses for common operational scenarios.
+Reference playbook for keeping the ExplorerToken stack healthy in production. Commands assume the app lives in `/var/www/haswork.dev` and systemd/nginx run on the same host.
 
-## Restarting services
+---
+
+## Deploy
 
 ```bash
+cd /var/www/haswork.dev
+sudo -u explorertoken git pull origin main
+sudo -u explorertoken npm ci
+sudo -u explorertoken npm run build
 sudo systemctl restart explorertoken-backend
-sudo systemctl reload nginx
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
-Verify status:
+> Tip: migrations are part of the backend build step. If a manual rerun is needed, execute `sudo -u explorertoken npm run migrate --workspace backend`.
+
+---
+
+## Restart
+
+Restart only what you need:
+
+```bash
+sudo systemctl restart explorertoken-backend      # Node API
+sudo systemctl reload nginx                       # picks up config/asset changes
+```
+
+Verify status after restart:
 
 ```bash
 sudo systemctl status explorertoken-backend --no-pager
-journalctl -u explorertoken-backend -f
+sudo journalctl -u explorertoken-backend -n 40 --no-pager
 ```
 
-## Deploying a new build
+---
 
-Run the shipping script from the host:
+## Logs
+
+- Tail structured backend logs:
+
+   ```bash
+   sudo journalctl -u explorertoken-backend -f
+   ```
+
+- Inspect Nginx access & error logs:
+
+   ```bash
+   sudo tail -n 200 /var/log/nginx/access.log
+   sudo tail -n 200 /var/log/nginx/error.log
+   ```
+
+Archive logs with `journalctl -u explorertoken-backend --since "2025-01-01" --until now > backend.log` when handing over to engineering.
+
+---
+
+## Rate-limit smoke test
+
+Confirm Redis-backed limiter is active by bursting login requests against the backend service port (bypass CDN caching):
 
 ```bash
-sudo /srv/explorertoken/ops/scripts/deploy.sh origin main
+for i in $(seq 1 8); do
+   curl -sf -X POST http://127.0.0.1:4000/api/auth/login \
+      -H 'Content-Type: application/json' \
+      -d '{"email":"ops@example.com","password":"invalid"}' \
+      -o /dev/null -w "#%{http_code}\n"
+
 ```
 
-## Database migrations
+Expected result: first few attempts return `401`, the sixth or seventh returns `429`. If every response is `401`, inspect Redis connectivity (`redis-cli -u redis://127.0.0.1:6379 ping`).
+
+---
+
+## Curl checks
+
+Run these from the host (adjust domain if fronted by CDN/LB):
 
 ```bash
-npm run migrate --workspace backend
+curl -I http://127.0.0.1/                      # static frontend alive
+curl -I http://127.0.0.1/api/chains           # chain catalogue
+curl -I http://127.0.0.1/api/admin/settings   # should be 401 without token
+curl -sS http://127.0.0.1:4000/health         # backend health direct
+curl -sS http://127.0.0.1/api/health          # nginx proxy path
 ```
 
-If a migration needs to be re-run, adjust the migration table `schema_migrations` accordingly.
+Health responses must resemble:
 
-## Clearing Redis-backed rate limits
-
-```bash
-redis-cli -u "$REDIS_URL" KEYS "rl:*" | xargs redis-cli -u "$REDIS_URL" DEL
+```json
+{ "ok": true, "version": "abc1234", "uptime": 12345 }
 ```
 
-The backend automatically falls back to an in-memory limiter with warning logs when Redis is unavailable.
+Investigate immediately if:
 
-## Rotating the admin API token
+- `/api/chains` stops returning the 9 supported networks + Cronos (unsupported)
+- `/api/health` diverges from the direct backend health response
+- Any curl emits 5xx responses or stalls >2s
 
-1. Update the token validation logic in `backend/src/middleware/auth.ts` (replace `admin-dev-token`).
-2. Redeploy the backend.
-3. Invalidate old sessions by clearing tokens in the frontend storage.
+---
 
-## Investigating elevated error rates
-
-1. Check the health endpoint: `curl https://explorer.yourdomain.com/health`.
-2. Inspect backend logs for stack traces (`journalctl -u explorertoken-backend`).
-3. Validate upstream dependencies:
-   - PostgreSQL connectivity (`psql $DATABASE_URL -c 'select 1;'`)
-   - Redis availability (`redis-cli -u $REDIS_URL ping`)
-4. Ensure Cloudflare / load balancer health checks are green.
-
-## Emergency rollback
-
-1. `git checkout` the last known good tag in `/srv/explorertoken`.
-2. Re-run the deploy script.
-3. If database migrations introduced the regression, restore from the most recent snapshot.
+Keep this runbook synced with production changes. For deeper incidents (database, migrations, infrastructure) escalate to the on-call backend engineer.
