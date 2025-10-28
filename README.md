@@ -39,7 +39,7 @@ ExplorerToken is a production-oriented, multi-chain token explorer inspired by P
    npm run dev --workspace frontend
    ```
 
-Detailed instructions live in [`docs/SETUP.md`](docs/SETUP.md).
+Detailed instructions live in [`docs/setup.md`](docs/setup.md).
 
 ## Key npm scripts
 
@@ -171,7 +171,7 @@ erDiagram
 
 ## Documentation & acceptance
 
-- Local setup: [`docs/SETUP.md`](docs/SETUP.md)
+- Local setup: [`docs/setup.md`](docs/setup.md)
 - Deployment playbook: [`docs/deployment.md`](docs/deployment.md)
 - Ops runbook: [`docs/runbook.md`](docs/runbook.md)
 - Release acceptance checklist: [`docs/acceptance.md`](docs/acceptance.md)
