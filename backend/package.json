@@ -12,6 +12,7 @@
     "migrate": "ts-node scripts/run-migrations.ts",
     "holders:index": "ts-node src/workers/holdersIndexer.ts",
     "create-admin": "ts-node scripts/create-admin.ts",
+    "bootstrap-admin": "node dist/scripts/bootstrap-admin.js",
     "lint": "eslint --max-warnings=0 --ext .ts ./src ./scripts && prettier --check \"src/**/*.ts\" \"scripts/**/*.ts\""
   },
   "dependencies": {

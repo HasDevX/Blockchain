@@ -95,6 +95,7 @@ describe("createRateLimiters", () => {
     rpcUrls: {},
     adminEmail: "admin@example.com",
     adminPassword: "password",
+    adminPasswordHash: undefined,
     jwtSecret: "secret",
   };
 

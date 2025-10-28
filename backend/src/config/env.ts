@@ -27,7 +27,8 @@ export interface AppEnv {
   etherscanApiKey?: string;
   rpcUrls: Record<number, string>;
   adminEmail: string;
-  adminPassword: string;
+  adminPassword?: string;
+  adminPasswordHash?: string;
   jwtSecret: string;
 }
 
@@ -47,11 +48,17 @@ export function loadEnv(): AppEnv {
     ETHERSCAN_API_KEY,
     ADMIN_EMAIL,
     ADMIN_PASSWORD,
+    ADMIN_PASSWORD_BCRYPT_HASH,
     JWT_SECRET,
   } = process.env;
 
   const adminEmail = requireEnv("ADMIN_EMAIL", ADMIN_EMAIL).toLowerCase();
-  const adminPassword = requireEnv("ADMIN_PASSWORD", ADMIN_PASSWORD);
+  const adminPassword = normalizeOptional(ADMIN_PASSWORD);
+  const adminPasswordHash = normalizeOptional(ADMIN_PASSWORD_BCRYPT_HASH);
+
+  if (!adminPassword && !adminPasswordHash) {
+    throw new Error("ADMIN_PASSWORD or ADMIN_PASSWORD_BCRYPT_HASH must be configured");
+  }
   const jwtSecret = requireEnv("JWT_SECRET", JWT_SECRET);
 
   cachedEnv = {
@@ -64,6 +71,7 @@ export function loadEnv(): AppEnv {
     rpcUrls: buildRpcUrlMap(),
     adminEmail,
     adminPassword,
+    adminPasswordHash,
     jwtSecret,
   };
 
@@ -100,4 +108,13 @@ function requireEnv(name: string, value: NullableString): string {
   }
 
   return value.trim();
+}
+
+function normalizeOptional(value: NullableString): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }

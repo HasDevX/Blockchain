@@ -6,7 +6,8 @@
     "declaration": true,
     "sourceMap": true,
     "removeComments": true,
-    "rootDir": "src"
+    "rootDir": "."
   },
-  "exclude": ["src/__tests__/**/*", "scripts/**/*", "**/*.test.ts"]
+  "include": ["src", "scripts"],
+  "exclude": ["src/__tests__/**/*", "**/*.test.ts"]
 }
