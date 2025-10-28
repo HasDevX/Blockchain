@@ -3,7 +3,9 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-
 import { SWRConfig } from "swr";
 import { TopNav } from "./components/TopNav";
 import { ChainPills } from "./components/ChainPills";
+import { Header } from "./components/layout/Header";
 import { DashboardPage } from "./pages/Dashboard";
+import { TokensPage } from "./pages/Tokens";
 import { TokenPage } from "./pages/Token";
 import { TransactionPage } from "./pages/Transaction";
 import { AddressPage } from "./pages/Address";
@@ -131,6 +133,7 @@ function Shell() {
 
   return (
     <div className="min-h-screen bg-surface text-slate-100">
+      <Header />
       <TopNav onGlobalSearch={handleGlobalSearch} actions={chainActions} />
       <main className="mx-auto max-w-6xl px-4 py-8">
         <Routes>
@@ -150,6 +153,7 @@ function Shell() {
             path="/token/:address"
             element={<TokenPage key={`${location.pathname}${location.search}`} />}
           />
+          <Route path="/token" element={<TokensPage />} />
           <Route path="/tx/:hash" element={<TransactionPage />} />
           <Route path="/address/:address" element={<AddressPage />} />
           <Route path="/login" element={<LoginPage />} />
