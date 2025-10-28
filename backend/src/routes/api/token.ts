@@ -1,7 +1,11 @@
 import { Request, Response, Router } from "express";
 import { getChainById } from "../../config/chains";
 import { normalizeAddress } from "../../services/holderStore";
-import { getTokenHolders, UnsupportedChainError } from "../../services/tokenService";
+import {
+  getTokenChainCoverage,
+  getTokenHolders,
+  UnsupportedChainError,
+} from "../../services/tokenService";
 
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
@@ -74,6 +78,21 @@ function sanitizeCursor(raw: string | undefined): string | null {
 
 export function createTokenRouter() {
   const router = Router();
+
+  router.get("/:address/chains", async (req: Request, res: Response) => {
+    try {
+      const chains = await getTokenChainCoverage(req.params.address);
+      res.json({ chains });
+    } catch (error) {
+      if (error instanceof Error && error.message.toLowerCase().includes("invalid address")) {
+        res.status(400).json({ error: "invalid_address" });
+        return;
+      }
+
+      console.error("Failed to load token chain coverage", error);
+      res.status(500).json({ error: "token_chains_unavailable" });
+    }
+  });
 
   router.get("/:address/holders", async (req: Request, res: Response) => {
     const chainIdValue = coerceSingleValue(req.query.chainId as string | string[] | undefined);

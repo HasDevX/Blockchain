@@ -2,7 +2,7 @@ import cron from "node-cron";
 import type { ScheduledTask } from "node-cron";
 import { getPool, withTransaction } from "../lib/db";
 import { getRpcUrl } from "../config/rpc";
-import { RpcClient, RpcRateLimitError } from "../lib/rpcClient";
+import { RpcClient, RpcClientOptions, RpcRateLimitError } from "../lib/rpcClient";
 import {
   aggregateTransferDeltas,
   applyHolderDeltas,
@@ -16,50 +16,31 @@ import {
   updateTokenCursor,
   type TokenCursor,
 } from "../services/tokenHolderRepository";
+import {
+  ADAPTIVE_RETRY_DELAY_MS,
+  getInitialSpan,
+  isBlockRangeTooLargeError,
+  MAX_SPAN_RETRIES,
+  rememberSpan,
+  resetSpanHints as resetSpanHintsInternal,
+  resolveMaxSpan,
+  shrinkSpan,
+} from "./adaptiveSpan";
 
-const MAX_SPAN_BY_CHAIN = {
-  1: 5_000,
-  10: 5_000,
-  56: 3_000,
-  137: 1_000,
-  42161: 5_000,
-  43114: 3_000,
-  8453: 3_000,
-  324: 2_000,
-  5000: 3_000,
-} as const;
+export const resetSpanHints = resetSpanHintsInternal;
 
 const INITIAL_LOOKBACK_BLOCKS = 50_000n;
 const SCHEDULE_EXPRESSION = process.env.HOLDERS_INDEXER_CRON ?? "*/5 * * * * *";
-const RETRY_BASE_MS = 1_500;
-const MIN_BLOCK_SPAN = 100n;
-const MAX_SPAN_RETRIES = 4;
-const ADAPTIVE_RETRY_DELAY_MS = 300;
-
-const DEFAULT_MAX_SPAN = parsePositiveBigInt(process.env.INDEXER_MAX_SPAN_DEFAULT) ?? 2_000n;
-const spanHints = new Map<number, bigint>();
-
-export function resetSpanHints(): void {
-  spanHints.clear();
-}
-
-function parsePositiveBigInt(value: string | undefined): bigint | null {
-  if (!value) {
-    return null;
+const RETRY_BASE_MS = (() => {
+  const raw = process.env.INDEXER_BACKOFF_MS;
+  if (!raw) {
+    return 1_500;
   }
 
-  try {
-    const parsed = BigInt(value);
-
-    if (parsed > 0n) {
-      return parsed;
-    }
-  } catch (error) {
-    return null;
-  }
-
-  return null;
-}
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 1_500;
+})();
+const RPC_CLIENT_OPTIONS = buildRpcClientOptions();
 
 interface IndexStats {
   chainId: number;
@@ -92,7 +73,7 @@ function computeStartBlock(cursor: TokenCursor, latestBlock: bigint): bigint | n
 
 export async function processCursor(cursor: TokenCursor): Promise<boolean> {
   const rpcUrl = getRpcUrl(cursor.chainId);
-  const rpcClient = new RpcClient(rpcUrl);
+  const rpcClient = new RpcClient(rpcUrl, RPC_CLIENT_OPTIONS);
 
   const latestBlock = await rpcClient.getBlockNumber();
   const startBlock = computeStartBlock(cursor, latestBlock);
@@ -132,7 +113,7 @@ export async function processCursor(cursor: TokenCursor): Promise<boolean> {
         await updateTokenCursor(client, cursor.chainId, normalizedToken, nextFromBlock, toBlock);
       });
 
-      spanHints.set(cursor.chainId, span);
+      rememberSpan(cursor.chainId, span);
 
       reportProgress({
         chainId: cursor.chainId,
@@ -179,95 +160,26 @@ export async function processCursor(cursor: TokenCursor): Promise<boolean> {
   return false;
 }
 
-function resolveMaxSpan(chainId: number): bigint {
-  const envKey = `INDEXER_MAX_SPAN_${chainId}`;
-  const override = parsePositiveBigInt(process.env[envKey]);
+function buildRpcClientOptions(): RpcClientOptions {
+  const qpsRaw = process.env.INDEXER_QPS;
+  const minDelayRaw = process.env.INDEXER_RPC_MIN_DELAY_MS;
+  const options: RpcClientOptions = {};
 
-  if (override) {
-    return override;
+  if (qpsRaw) {
+    const parsed = Number.parseInt(qpsRaw, 10);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      options.qps = parsed;
+    }
   }
 
-  const configured = MAX_SPAN_BY_CHAIN[chainId as keyof typeof MAX_SPAN_BY_CHAIN];
-
-  if (configured) {
-    return BigInt(configured);
+  if (minDelayRaw) {
+    const parsed = Number.parseInt(minDelayRaw, 10);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      options.minDelayMs = parsed;
+    }
   }
 
-  return DEFAULT_MAX_SPAN;
-}
-
-function getInitialSpan(chainId: number, remaining: bigint, maxSpan: bigint): bigint {
-  let span = spanHints.get(chainId) ?? maxSpan;
-
-  if (span > maxSpan) {
-    span = maxSpan;
-  }
-
-  if (span > remaining) {
-    span = remaining;
-  }
-
-  if (span < MIN_BLOCK_SPAN && remaining >= MIN_BLOCK_SPAN) {
-    span = MIN_BLOCK_SPAN;
-  }
-
-  if (span < 1n) {
-    span = remaining > 0n ? remaining : 1n;
-  }
-
-  return span;
-}
-
-function shrinkSpan(
-  chainId: number,
-  currentSpan: bigint,
-  remaining: bigint,
-  maxSpan: bigint,
-): bigint {
-  let next = currentSpan / 2n;
-
-  if (next < MIN_BLOCK_SPAN && remaining >= MIN_BLOCK_SPAN) {
-    next = MIN_BLOCK_SPAN;
-  }
-
-  if (next > remaining) {
-    next = remaining;
-  }
-
-  if (next < 1n) {
-    next = remaining > 0n ? remaining : 1n;
-  }
-
-  if (next > maxSpan) {
-    next = maxSpan;
-  }
-
-  spanHints.set(chainId, next);
-  return next;
-}
-
-function isBlockRangeTooLargeError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-
-  const anyError = error as { code?: number };
-
-  if (typeof anyError.code === "number" && (anyError.code === -32062 || anyError.code === -32602)) {
-    return true;
-  }
-
-  const message = error.message.toLowerCase();
-
-  if (message.includes("-32062") || message.includes("-32602")) {
-    return true;
-  }
-
-  if (message.includes("status 413") || message.includes("payload too large")) {
-    return true;
-  }
-
-  return false;
+  return options;
 }
 
 function logSpanAdaptation(chainId: number, token: string, oldSpan: bigint, newSpan: bigint): void {

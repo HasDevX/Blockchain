@@ -20,6 +20,7 @@ vi.mock("react-hot-toast", () => ({
 
 const mockUseToken = vi.fn();
 const mockUseTokenHolders = vi.fn();
+const mockUseTokenChainCoverage = vi.fn();
 
 vi.mock("../../hooks/useToken", () => ({
   useToken: (...args: unknown[]) => mockUseToken(...args),
@@ -29,10 +30,15 @@ vi.mock("../../hooks/useTokenHolders", () => ({
   useTokenHolders: (...args: unknown[]) => mockUseTokenHolders(...args),
 }));
 
+vi.mock("../../hooks/useTokenChainCoverage", () => ({
+  useTokenChainCoverage: (...args: unknown[]) => mockUseTokenChainCoverage(...args),
+}));
+
 describe("TokenPage", () => {
   beforeEach(() => {
     mockUseToken.mockReset();
     mockUseTokenHolders.mockReset();
+    mockUseTokenChainCoverage.mockReset();
   });
 
   it("requests holders using query chain id", async () => {
@@ -65,6 +71,7 @@ describe("TokenPage", () => {
       error: null,
       isValidating: false,
     });
+    mockUseTokenChainCoverage.mockReturnValue({ data: [], isLoading: false, error: null });
 
     await act(async () => {
       render(
@@ -97,6 +104,7 @@ describe("TokenPage", () => {
   it("shows invalid path message when chain id missing", async () => {
     mockUseToken.mockReturnValue({ data: null, isLoading: false, error: null });
     mockUseTokenHolders.mockReturnValue({ data: null, isLoading: false, error: null });
+    mockUseTokenChainCoverage.mockReturnValue({ data: [], isLoading: false, error: null });
 
     await act(async () => {
       render(
@@ -131,6 +139,7 @@ describe("TokenPage", () => {
       error: null,
       isValidating: true,
     });
+    mockUseTokenChainCoverage.mockReturnValue({ data: [], isLoading: false, error: null });
 
     await act(async () => {
       render(
@@ -149,9 +158,9 @@ describe("TokenPage", () => {
       await userEvent.click(holdersTab);
     });
 
-  const messages = await screen.findAllByText(/Indexing holders… this can take a few minutes/i);
-  const statusMessage = messages.find((node) => node.closest('[role="status"]'));
-  expect(statusMessage).toBeDefined();
+    const messages = await screen.findAllByText(/Indexing holders… this can take a few minutes/i);
+    const statusMessage = messages.find((node) => node.closest('[role="status"]'));
+    expect(statusMessage).toBeDefined();
   });
 
   it("shows empty state message when no status is present", async () => {
@@ -174,6 +183,7 @@ describe("TokenPage", () => {
       error: null,
       isValidating: false,
     });
+    mockUseTokenChainCoverage.mockReturnValue({ data: [], isLoading: false, error: null });
 
     await act(async () => {
       render(

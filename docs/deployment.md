@@ -68,16 +68,25 @@ sudo -u explorer bash -lc 'cd /srv/explorertoken && npm run migrate --workspace 
 
 ## 6. Configure systemd
 
-Copy the unit file and enable it:
+Copy the unit files and enable them:
 
 ```bash
 sudo cp /srv/explorertoken/ops/systemd/explorertoken-backend.service /etc/systemd/system/
 sudo cp /srv/explorertoken/ops/systemd/explorertoken-holders-indexer.service /etc/systemd/system/
+sudo cp /srv/explorertoken/ops/systemd/explorertoken-chain@.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable explorertoken-backend.service
 sudo systemctl start explorertoken-backend.service
 sudo systemctl enable explorertoken-holders-indexer.service
 sudo systemctl start explorertoken-holders-indexer.service
+```
+
+Instantiate the chain poller once per supported network. The unit template injects the chain ID from the instance suffix, so add one unit per chain you want to track (replace the sample IDs with your shortlist):
+
+```bash
+sudo systemctl enable --now explorertoken-chain@1.service
+sudo systemctl enable --now explorertoken-chain@10.service
+sudo systemctl enable --now explorertoken-chain@137.service
 ```
 
 ## 7. Configure Nginx
@@ -113,6 +122,7 @@ The script performs:
 4. `npm run migrate --workspace backend`
 5. `rsync` of `frontend/dist` into `/var/www/explorertoken`
 6. `systemctl restart explorertoken-backend`
+7. `systemctl restart explorertoken-chain@*.service` for each active chain instance
 
 Monitor logs with:
 

@@ -47,18 +47,18 @@ The holders indexer walks ERC-20 transfers in small batches per token/chain. A `
 1. Authenticate as an admin (same credentials as the dashboard).
 2. Call the reindex endpoint; provide the chain ID, token address, and the block you want to start from. Example:
 
-    ```bash
-    curl -X POST https://explorertoken.haswork.dev/api/admin/reindex \
-       -H "Content-Type: application/json" \
-       -u admin@example.com:changeme \
-       -d '{
-          "chainId": 1,
-          "token": "0x0000000000000000000000000000000000000000",
-          "fromBlock": "18000000"
-       }'
-    ```
+   ```bash
+   curl -X POST https://explorertoken.haswork.dev/api/admin/reindex \
+      -H "Content-Type: application/json" \
+      -u admin@example.com:changeme \
+      -d '{
+         "chainId": 1,
+         "token": "0x0000000000000000000000000000000000000000",
+         "fromBlock": "18000000"
+      }'
+   ```
 
-    A `202` response means the token is queued. The scheduler will pick it up on the next tick and process `HOLDERS_INDEXER_CHUNK` blocks at a time until the cursor advances past `latestBlock`.
+   A `202` response means the token is queued. The scheduler will pick it up on the next tick and process `HOLDERS_INDEXER_CHUNK` blocks at a time until the cursor advances past `latestBlock`.
 
 ### Tune batch size & cadence
 
@@ -76,15 +76,75 @@ sudo systemctl restart explorertoken-holders-indexer
 
 - Tail the dedicated service:
 
-   ```bash
-   sudo journalctl -u explorertoken-holders-indexer -f
-   ```
+  ```bash
+  sudo journalctl -u explorertoken-holders-indexer -f
+  ```
 
 - Each batch emits two structured lines:
-   - `{"event":"holders.indexer.progress", ...}` – includes chain, token, block range, and transfer count.
-   - `metric holders_batch chain_id=... token=... from_block=... to_block=... transfers=...` – ready for Prometheus-style log scraping.
+  - `{"event":"holders.indexer.progress", ...}` – includes chain, token, block range, and transfer count.
+  - `metric holders_batch chain_id=... token=... from_block=... to_block=... transfers=...` – ready for Prometheus-style log scraping.
 - Rate-limit and error events show up as `holders.indexer.rate_limit` and `holders.indexer.error`. Investigate spikes by checking RPC quotas and network health.
 - A graceful shutdown logs `{"event":"holders.indexer.stop","reason":"sigterm"}`. Anything else suggests the process crashed—review `journalctl` and restart.
+
+---
+
+## Chain poller
+
+The multi-chain poller ingests blocks, transactions, receipts, and ERC-20 transfer logs directly from the RPC. Each chain runs in its own unit (`explorertoken-chain@<id>.service`), keeping blast radius small. The worker adapts batch span based on RPC responses and defaults to a 10-block confirmation window before committing data.
+
+### Start/stop
+
+```bash
+sudo systemctl start explorertoken-chain@137    # start live tail for Polygon
+sudo systemctl status explorertoken-chain@137   # verify it is running
+sudo systemctl stop explorertoken-chain@137     # stop the worker
+```
+
+Enable at boot with:
+
+```bash
+sudo systemctl enable explorertoken-chain@137
+```
+
+### Ad-hoc runs
+
+- **Live tail (single chain)** – runs until interrupted, honoring checkpoints:
+
+  ```bash
+  cd /var/www/haswork.dev/backend
+  node dist/workers/chainPoller.js --chainId 137 --mode live
+  ```
+
+- **Backfill** – replay historical blocks once, then exit. Provide the starting block (and optionally an end block):
+
+  ```bash
+  node dist/workers/chainPoller.js --chainId 137 --mode backfill --from 18000000
+  node dist/workers/chainPoller.js --chainId 137 --mode backfill --from 17000000 --to 17500000
+  ```
+
+  Backfill ignores stored checkpoints, but still updates `job_checkpoints` once batches commit.
+
+### Tuning knobs
+
+- `INDEXER_MAX_SPAN_<id>` / `INDEXER_MIN_SPAN_<id>` – clamp adaptive batch size per chain.
+- `INDEXER_QPS` – global RPC QPS throttle shared across pollers and the holders indexer.
+- `INDEXER_BACKOFF_MS` – base sleep duration after throttling or transient RPC errors.
+- `CHAIN_POLLER_CONFIRMATIONS` (or per-chain override) – confirmation depth before a block is processed.
+
+Update overrides in `/etc/explorertoken/backend.env` (or the systemd drop-in), then restart the affected `explorertoken-chain@<id>` units.
+
+### Monitoring
+
+- Tail logs for a specific chain:
+
+  ```bash
+  sudo journalctl -u explorertoken-chain@137 -f
+  ```
+
+- Each batch outputs structured JSON (`chain.poller.batch`, `chain.poller.rate_limit`, `chain.poller.error`, `chain.poller.complete`) suitable for log aggregation.
+- Persistent rate-limit events usually mean the configured span or QPS is too aggressive—lower `INDEXER_MAX_SPAN_<id>` or raise `INDEXER_BACKOFF_MS`.
+
+The worker exits gracefully on `SIGINT`/`SIGTERM`, so systemd restarts are safe.
 
 ---
 

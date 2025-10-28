@@ -1,0 +1,20 @@
+[Unit]
+Description=ExplorerToken Chain Poller (chain %i)
+After=network.target redis.service postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/home/deploy/ExplorerToken/backend
+EnvironmentFile=/home/deploy/ExplorerToken/backend/.env
+ExecStart=/usr/bin/node /home/deploy/ExplorerToken/backend/dist/workers/chainPoller.js --chainId %i --mode live
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGTERM
+TimeoutStopSec=20s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

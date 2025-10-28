@@ -153,3 +153,8 @@ export function mergeChainMetadata(chains: RawChain[]): Chain[] {
 export function getOrderedChainMetadata(): ChainMetadata[] {
   return [...ORDERED_CHAIN_METADATA];
 }
+
+export function getChainMetadataById(chainId: number): ChainMetadata | undefined {
+  const metadata = CHAIN_METADATA_BY_ID[chainId];
+  return metadata ? { ...metadata } : undefined;
+}

@@ -36,6 +36,18 @@ export interface TokenHoldersResponse {
   status: "ok" | "indexing";
 }
 
+export interface TokenChainCoverageEntry {
+  chainId: number;
+  supported: boolean;
+  status: "ok" | "indexing";
+  fromBlock: string | null;
+  toBlock: string | null;
+  updatedAt: string | null;
+  lastTransferBlock: string | null;
+  lastTransferAt: string | null;
+  transferCount: number;
+}
+
 export interface GetTokenHoldersParams {
   chainId: number;
   address: string;
@@ -280,4 +292,98 @@ export async function getTokenHolders({
 
 export function listChains() {
   return CHAINS;
+}
+
+export async function getTokenChainCoverage(address: string): Promise<TokenChainCoverageEntry[]> {
+  const normalizedAddress = normalizeAddress(address);
+  const tokenBuffer = addressToBuffer(normalizedAddress);
+  const pool = getPool();
+
+  const cursorRows = await pool.query<{
+    chain_id: number;
+    from_block: string | null;
+    to_block: string | null;
+    updated_at: Date;
+  }>(
+    `SELECT chain_id, from_block::TEXT AS from_block, to_block::TEXT AS to_block, updated_at
+     FROM token_index_cursor
+     WHERE token = $1
+     ORDER BY chain_id ASC`,
+    [tokenBuffer],
+  );
+
+  const transferRows = await pool.query<{
+    chain_id: number;
+    transfers: string;
+    last_block: string | null;
+    last_timestamp: Date | null;
+  }>(
+    `SELECT
+       tt.chain_id,
+       COUNT(*)::TEXT AS transfers,
+       MAX(tx.block_number)::TEXT AS last_block,
+       MAX(bl."timestamp") AS last_timestamp
+     FROM token_transfers tt
+     JOIN transactions tx
+       ON tx.chain_id = tt.chain_id AND tx.hash = tt.tx_hash
+     LEFT JOIN blocks bl
+       ON bl.chain_id = tx.chain_id AND bl.number = tx.block_number
+     WHERE tt.token = $1
+     GROUP BY tt.chain_id`,
+    [tokenBuffer],
+  );
+
+  const transferMap = new Map<
+    number,
+    { transfers: number; lastBlock: string | null; lastTimestamp: Date | null }
+  >();
+
+  for (const row of transferRows.rows) {
+    transferMap.set(row.chain_id, {
+      transfers: Number(row.transfers),
+      lastBlock: row.last_block,
+      lastTimestamp: row.last_timestamp,
+    });
+  }
+
+  const coverageMap = new Map<number, TokenChainCoverageEntry>();
+
+  for (const row of cursorRows.rows) {
+    const chain = getChainById(row.chain_id);
+    const transferInfo = transferMap.get(row.chain_id);
+
+    coverageMap.set(row.chain_id, {
+      chainId: row.chain_id,
+      supported: chain?.supported ?? false,
+      status: row.to_block ? "ok" : "indexing",
+      fromBlock: row.from_block,
+      toBlock: row.to_block,
+      updatedAt: row.updated_at.toISOString(),
+      lastTransferBlock: transferInfo?.lastBlock ?? null,
+      lastTransferAt: transferInfo?.lastTimestamp ? transferInfo.lastTimestamp.toISOString() : null,
+      transferCount: transferInfo?.transfers ?? 0,
+    });
+  }
+
+  for (const [chainId, info] of transferMap.entries()) {
+    if (coverageMap.has(chainId)) {
+      continue;
+    }
+
+    const chain = getChainById(chainId);
+
+    coverageMap.set(chainId, {
+      chainId,
+      supported: chain?.supported ?? false,
+      status: "indexing",
+      fromBlock: null,
+      toBlock: null,
+      updatedAt: null,
+      lastTransferBlock: info.lastBlock,
+      lastTransferAt: info.lastTimestamp ? info.lastTimestamp.toISOString() : null,
+      transferCount: info.transfers,
+    });
+  }
+
+  return Array.from(coverageMap.values()).sort((a, b) => a.chainId - b.chainId);
 }

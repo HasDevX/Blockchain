@@ -5,6 +5,8 @@ import { TopNav } from "./components/TopNav";
 import { ChainPills } from "./components/ChainPills";
 import { DashboardPage } from "./pages/Dashboard";
 import { TokenPage } from "./pages/Token";
+import { TransactionPage } from "./pages/Transaction";
+import { AddressPage } from "./pages/Address";
 import { AdminSettingsPage } from "./pages/AdminSettings";
 import { LoginPage } from "./pages/Login";
 import { useChains } from "./hooks/useChains";
@@ -59,19 +61,66 @@ function Shell() {
       }
 
       let chainId = defaultChainId;
-      let address = trimmed;
+      let remaining = trimmed;
 
-      if (trimmed.includes(":")) {
-        const [prefix, rest] = trimmed.split(":");
-        const parsed = Number(prefix);
-        if (!Number.isNaN(parsed) && rest) {
+      const chainMatch = remaining.match(/^(\d+):(.*)$/);
+      if (chainMatch) {
+        const parsed = Number(chainMatch[1]);
+        if (Number.isFinite(parsed)) {
           chainId = parsed;
-          address = rest;
+          remaining = chainMatch[2];
         }
       }
 
-      const encodedAddress = encodeURIComponent(address.trim().toLowerCase());
-      navigate(`/token/${encodedAddress}?chainId=${chainId}`);
+      remaining = remaining.trim();
+
+      if (!remaining) {
+        return;
+      }
+
+      let requestedType: "token" | "address" | "transaction" | null = null;
+      const typeMatch = remaining.match(/^(tx|transaction|addr|address|token):/i);
+      if (typeMatch) {
+        const prefix = typeMatch[1].toLowerCase();
+        if (prefix.startsWith("tx")) {
+          requestedType = "transaction";
+        } else if (prefix.startsWith("addr")) {
+          requestedType = "address";
+        } else if (prefix.startsWith("token")) {
+          requestedType = "token";
+        }
+        remaining = remaining.slice(typeMatch[0].length).trim();
+      }
+
+      if (!remaining) {
+        return;
+      }
+
+      const normalized = remaining.toLowerCase();
+
+      if (!requestedType) {
+        if (normalized.startsWith("0x") && normalized.length === 66) {
+          requestedType = "transaction";
+        } else if (normalized.startsWith("0x") && normalized.length === 42) {
+          requestedType = "token";
+        } else {
+          requestedType = "token";
+        }
+      }
+
+      const encoded = encodeURIComponent(normalized);
+
+      if (requestedType === "transaction") {
+        navigate(`/tx/${encoded}?chainId=${chainId}`);
+        return;
+      }
+
+      if (requestedType === "address") {
+        navigate(`/address/${encoded}?chainId=${chainId}`);
+        return;
+      }
+
+      navigate(`/token/${encoded}?chainId=${chainId}`);
     },
     [defaultChainId, navigate],
   );
@@ -101,6 +150,8 @@ function Shell() {
             path="/token/:address"
             element={<TokenPage key={`${location.pathname}${location.search}`} />}
           />
+          <Route path="/tx/:hash" element={<TransactionPage />} />
+          <Route path="/address/:address" element={<AddressPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/admin" element={<AdminSettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

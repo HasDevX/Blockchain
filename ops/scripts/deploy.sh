@@ -32,6 +32,19 @@ if command -v systemctl >/dev/null 2>&1; then
   echo "==> Restarting ${SERVICE_NAME}"
   sudo systemctl restart "$SERVICE_NAME"
   sudo systemctl status "$SERVICE_NAME" --no-pager
+
+  echo "==> Restarting per-chain indexers"
+  chain_units=$(systemctl list-units --type=service --all 'explorertoken-chain@*.service' --no-legend | awk '{print $1}' || true)
+
+  if [[ -n "$chain_units" ]]; then
+    while IFS= read -r unit; do
+      [[ -z "$unit" ]] && continue
+      sudo systemctl restart "$unit"
+      sudo systemctl status "$unit" --no-pager
+    done <<<"$chain_units"
+  else
+    echo "No explorertoken-chain@*.service units found; skipping."
+  fi
 else
   echo "systemctl not available; restart the backend process manually."
 fi

@@ -1,9 +1,12 @@
 import type {
   AdminSettings,
+  AddressActivityResponse,
   Chain,
   HealthResponse,
+  TokenChainCoverageEntry,
   TokenHoldersPayload,
   TokenSummary,
+  TransactionDetails,
 } from "../types/api";
 import { API_BASE_URL } from "./config";
 import { mergeChainMetadata } from "./chainMetadata";
@@ -103,6 +106,44 @@ export async function fetchTokenHolders(
   const path = `/token/${normalizedAddress}/holders${query ? `?${query}` : ""}`;
 
   return fetchJson<TokenHoldersPayload>(path);
+}
+
+export async function fetchTransaction(chainId: number, hash: string): Promise<TransactionDetails> {
+  const normalizedHash = hash.toLowerCase();
+  const searchParams = new URLSearchParams();
+  searchParams.set("chainId", String(chainId));
+  const payload = await fetchJson<{ transaction: TransactionDetails }>(
+    `/tx/${encodeURIComponent(normalizedHash)}?${searchParams.toString()}`,
+  );
+  return payload.transaction;
+}
+
+export async function fetchAddressActivity(
+  chainId: number,
+  address: string,
+  params: { cursor?: string | null; limit?: number } = {},
+): Promise<AddressActivityResponse> {
+  const searchParams = new URLSearchParams();
+  searchParams.set("chainId", String(chainId));
+
+  if (params.cursor) {
+    searchParams.set("cursor", params.cursor);
+  }
+
+  if (params.limit) {
+    searchParams.set("limit", String(params.limit));
+  }
+
+  return fetchJson<AddressActivityResponse>(
+    `/address/${encodeURIComponent(address.toLowerCase())}/activity?${searchParams.toString()}`,
+  );
+}
+
+export async function fetchTokenChainCoverage(address: string): Promise<TokenChainCoverageEntry[]> {
+  const response = await fetchJson<{ chains: TokenChainCoverageEntry[] }>(
+    `/token/${encodeURIComponent(address.toLowerCase())}/chains`,
+  );
+  return response.chains;
 }
 
 export async function login(credentials: {
