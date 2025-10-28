@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ChainConfigRecord } from "../services/chainConfigService";
+import type { ChainConfigRecord, ChainEndpointRecord } from "../services/chainConfigService";
 
 const fetchChainConfigsMock = vi.fn<[], Promise<ChainConfigRecord[]>>();
+const listAllChainEndpointsMock = vi.fn<[], Promise<ChainEndpointRecord[]>>();
 const getPoolMock = vi.fn();
 let providerModule: typeof import("../services/chainConfigProvider");
 
@@ -11,12 +12,14 @@ vi.mock("../lib/db", () => ({
 
 vi.mock("../services/chainConfigService", () => ({
   fetchChainConfigs: fetchChainConfigsMock,
+  listAllChainEndpoints: listAllChainEndpointsMock,
 }));
 
 describe("chainConfigProvider", () => {
   beforeEach(async () => {
     vi.useFakeTimers();
     fetchChainConfigsMock.mockReset();
+    listAllChainEndpointsMock.mockReset();
     getPoolMock.mockReturnValue({});
     providerModule = await import("../services/chainConfigProvider");
     providerModule.invalidateChainConfigCache();
@@ -42,9 +45,11 @@ describe("chainConfigProvider", () => {
       minSpan: 100,
       maxSpan: 2_000,
       updatedAt: new Date(),
+      endpoints: [],
     };
 
     fetchChainConfigsMock.mockResolvedValue([sampleRecord]);
+    listAllChainEndpointsMock.mockResolvedValue([]);
 
     const first = await getRuntimeChainConfig(1);
     expect(first).toEqual(sampleRecord);

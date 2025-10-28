@@ -1,4 +1,10 @@
 import type {
+  AdminConnectionChain,
+  AdminConnectionEndpoint,
+  AdminConnectionsResponse,
+  AdminRpcTestResult,
+  AdminRpcTestFailure,
+  AdminRpcTestSuccess,
   AdminSettings,
   AddressActivityResponse,
   Chain,
@@ -171,4 +177,237 @@ export async function fetchAdminSettings(token?: string | null): Promise<AdminSe
 
     throw error;
   }
+}
+
+type RawAdminConnectionEndpoint = {
+  id: string;
+  chain_id: number;
+  url: string;
+  is_primary: boolean;
+  enabled: boolean;
+  qps: number;
+  min_span: number;
+  max_span: number;
+  weight: number;
+  order_index: number;
+  last_health: string | null;
+  last_checked_at: string | null;
+  updated_at: string;
+};
+
+type RawAdminConnectionChain = {
+  chain_id: number;
+  name: string;
+  endpoints: RawAdminConnectionEndpoint[];
+};
+
+type RawAdminConnectionsResponse = {
+  chains: RawAdminConnectionChain[];
+};
+
+type RawAdminRpcTestResult =
+  | ({ ok: true; latency_ms: number; tip: string } & Record<string, unknown>)
+  | ({ ok: false; error: string; message?: string; status?: number } & Record<string, unknown>);
+
+export interface AdminEndpointCreatePayload {
+  url: string;
+  isPrimary?: boolean;
+  enabled?: boolean;
+  qps?: number;
+  minSpan?: number;
+  maxSpan?: number;
+  weight?: number;
+  orderIndex?: number;
+}
+
+export type AdminEndpointUpdatePayload = Partial<AdminEndpointCreatePayload>;
+
+export interface AdminRpcTestPayload {
+  url: string;
+  chainId?: number | null;
+}
+
+export async function fetchAdminConnections(
+  token?: string | null,
+): Promise<AdminConnectionsResponse> {
+  const request = (tokenOverride?: string | null) =>
+    fetchJson<RawAdminConnectionsResponse>("/admin/connections", {
+      method: "GET",
+      ...(tokenOverride ? { token: tokenOverride } : {}),
+    }).then(normalizeAdminConnections);
+
+  try {
+    return await request();
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401 && token) {
+      return request(token);
+    }
+    throw error;
+  }
+}
+
+export async function createAdminEndpoint(
+  chainId: number,
+  payload: AdminEndpointCreatePayload,
+  token?: string | null,
+): Promise<AdminConnectionEndpoint> {
+  const body = buildEndpointRequestBody(payload);
+  const response = await fetchJson<{ endpoint: RawAdminConnectionEndpoint }>(
+    `/admin/chains/${chainId}/endpoints`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+      ...(token ? { token } : {}),
+    },
+  );
+
+  return normalizeAdminEndpoint(response.endpoint);
+}
+
+export async function updateAdminEndpoint(
+  chainId: number,
+  endpointId: string,
+  payload: AdminEndpointUpdatePayload,
+  token?: string | null,
+): Promise<AdminConnectionEndpoint> {
+  const body = buildEndpointRequestBody(payload);
+  const response = await fetchJson<{ endpoint: RawAdminConnectionEndpoint }>(
+    `/admin/chains/${chainId}/endpoints/${endpointId}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(body),
+      ...(token ? { token } : {}),
+    },
+  );
+
+  return normalizeAdminEndpoint(response.endpoint);
+}
+
+export async function disableAdminEndpoint(
+  chainId: number,
+  endpointId: string,
+  token?: string | null,
+): Promise<void> {
+  await fetchJson<void>(`/admin/chains/${chainId}/endpoints/${endpointId}`, {
+    method: "DELETE",
+    ...(token ? { token } : {}),
+  });
+}
+
+export async function testAdminRpc(
+  payload: AdminRpcTestPayload,
+  token?: string | null,
+): Promise<AdminRpcTestResult> {
+  const response = await fetchJson<RawAdminRpcTestResult>("/admin/test-rpc", {
+    method: "POST",
+    body: JSON.stringify(buildRpcTestRequestBody(payload)),
+    ...(token ? { token } : {}),
+  });
+
+  return normalizeAdminRpcTestResult(response);
+}
+
+function normalizeAdminConnections(
+  payload: RawAdminConnectionsResponse,
+): AdminConnectionsResponse {
+  return {
+    chains: payload.chains.map((chain) => normalizeAdminChain(chain)),
+  };
+}
+
+function normalizeAdminChain(chain: RawAdminConnectionChain): AdminConnectionChain {
+  return {
+    chainId: chain.chain_id,
+    name: chain.name,
+    endpoints: chain.endpoints.map((endpoint) => normalizeAdminEndpoint(endpoint)),
+  };
+}
+
+function normalizeAdminEndpoint(
+  endpoint: RawAdminConnectionEndpoint,
+): AdminConnectionEndpoint {
+  return {
+    id: endpoint.id,
+    chainId: endpoint.chain_id,
+    url: endpoint.url,
+    isPrimary: endpoint.is_primary,
+    enabled: endpoint.enabled,
+    qps: endpoint.qps,
+    minSpan: endpoint.min_span,
+    maxSpan: endpoint.max_span,
+    weight: endpoint.weight,
+    orderIndex: endpoint.order_index,
+    lastHealth: endpoint.last_health ?? null,
+    lastCheckedAt: endpoint.last_checked_at ?? null,
+    updatedAt: endpoint.updated_at,
+  };
+}
+
+function normalizeAdminRpcTestResult(result: RawAdminRpcTestResult): AdminRpcTestResult {
+  if (result.ok) {
+    return {
+      ok: true,
+      tip: result.tip,
+      latencyMs: result.latency_ms,
+    } satisfies AdminRpcTestSuccess;
+  }
+
+  return {
+    ok: false,
+    error: result.error,
+    message: "message" in result ? result.message : undefined,
+    status: "status" in result ? result.status : undefined,
+  } satisfies AdminRpcTestFailure;
+}
+
+function buildEndpointRequestBody(
+  payload: AdminEndpointUpdatePayload | AdminEndpointCreatePayload,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+
+  if (payload.url !== undefined) {
+    body.url = payload.url;
+  }
+
+  if (payload.isPrimary !== undefined) {
+    body.is_primary = payload.isPrimary;
+  }
+
+  if (payload.enabled !== undefined) {
+    body.enabled = payload.enabled;
+  }
+
+  if (payload.qps !== undefined) {
+    body.qps = payload.qps;
+  }
+
+  if (payload.minSpan !== undefined) {
+    body.min_span = payload.minSpan;
+  }
+
+  if (payload.maxSpan !== undefined) {
+    body.max_span = payload.maxSpan;
+  }
+
+  if (payload.weight !== undefined) {
+    body.weight = payload.weight;
+  }
+
+  if (payload.orderIndex !== undefined) {
+    body.order_index = payload.orderIndex;
+  }
+
+  return body;
+}
+
+function buildRpcTestRequestBody(payload: AdminRpcTestPayload) {
+  const body: Record<string, unknown> = {
+    url: payload.url,
+  };
+
+  if (payload.chainId !== undefined && payload.chainId !== null) {
+    body.chainId = payload.chainId;
+  }
+
+  return body;
 }

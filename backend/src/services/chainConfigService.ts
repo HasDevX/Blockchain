@@ -6,6 +6,38 @@ import { parsePositiveBigInt, resolveMaxSpan } from "../workers/adaptiveSpan";
 
 export type Queryable = Pool | PoolClient;
 
+export interface ChainEndpointRecord {
+  id: string;
+  chainId: number;
+  url: string;
+  isPrimary: boolean;
+  enabled: boolean;
+  qps: number;
+  minSpan: number;
+  maxSpan: number;
+  weight: number;
+  orderIndex: number;
+  lastHealth: string | null;
+  lastCheckedAt: Date | null;
+  updatedAt: Date;
+}
+
+interface ChainEndpointRow {
+  id: string;
+  chain_id: number;
+  url: string;
+  is_primary: boolean;
+  enabled: boolean;
+  qps: number;
+  min_span: number;
+  max_span: number;
+  weight: number;
+  order_index: number;
+  last_health: string | null;
+  last_checked_at: Date | null;
+  updated_at: Date;
+}
+
 export interface ChainConfigRecord {
   chainId: number;
   name: string;
@@ -19,30 +51,31 @@ export interface ChainConfigRecord {
   minSpan: number;
   maxSpan: number;
   updatedAt: Date;
-}
-
-export interface ChainConfigUpdate {
-  name?: string;
-  rpcUrl?: string | null;
-  etherscanApiKey?: string | null;
-  enabled?: boolean;
-  startBlock?: bigint | null;
-  qps?: number;
-  minSpan?: number;
-  maxSpan?: number;
+  endpoints: ChainEndpointRecord[];
 }
 
 interface ChainConfigRow {
   chain_id: number;
-  name: string;
+  name: string | null;
   rpc_url: string | null;
   etherscan_api_key: string | null;
-  enabled: boolean;
+  enabled: boolean | null;
   start_block: string | null;
   qps: number | null;
   min_span: number | null;
   max_span: number | null;
   updated_at: Date;
+}
+
+export interface ChainConfigUpdate {
+  name?: string | null;
+  enabled?: boolean;
+  rpcUrl?: string | null;
+  etherscanApiKey?: string | null;
+  startBlock?: bigint | null;
+  qps?: number;
+  minSpan?: number;
+  maxSpan?: number;
 }
 
 function getQueryable(queryable?: Queryable): Queryable {
@@ -54,10 +87,17 @@ function getQueryable(queryable?: Queryable): Queryable {
 }
 
 function resolveDefaultName(chainId: number): string {
-  return getChainById(chainId)?.name ?? `Chain ${chainId}`;
+  const chain = getChainById(chainId);
+  if (chain) {
+    return chain.name;
+  }
+
+  return `Chain ${chainId}`;
 }
 
-function resolveDefaultRpcUrl(chainId: number): { value: string | null; source: "env" | "none" } {
+function resolveDefaultRpcUrl(
+  chainId: number,
+): { value: string | null; source: "env" | "none" } {
   const env = loadEnv();
   const fallback = env.rpcUrls[chainId];
 
@@ -79,28 +119,21 @@ function resolveDefaultEtherscanKey(): { value: string | null; source: "env" | "
 }
 
 function resolveDefaultStartBlock(chainId: number): bigint | null {
-  const envKey = `CHAIN_POLLER_START_${chainId}`;
-  const raw = process.env[envKey];
-
-  if (!raw) {
-    return null;
+  const specific = parseNonNegativeBigInt(process.env[`INDEXER_START_BLOCK_${chainId}`]);
+  if (specific !== null) {
+    return specific;
   }
 
-  try {
-    const parsed = BigInt(raw);
-    if (parsed >= 0n) {
-      return parsed;
-    }
-  } catch (error) {
-    return null;
+  const generic = parseNonNegativeBigInt(process.env.INDEXER_START_BLOCK_DEFAULT);
+  if (generic !== null) {
+    return generic;
   }
 
   return null;
 }
 
 function resolveDefaultQps(chainId: number): number {
-  const specificKey = `INDEXER_QPS_${chainId}`;
-  const specific = parsePositiveInteger(process.env[specificKey]);
+  const specific = parsePositiveInteger(process.env[`INDEXER_QPS_${chainId}`]);
   if (specific !== null) {
     return specific;
   }
@@ -128,8 +161,7 @@ function resolveDefaultMinSpan(chainId: number): number {
 }
 
 function resolveDefaultMaxSpan(chainId: number): number {
-  const max = resolveMaxSpan(chainId);
-  return Number(max);
+  return Number(resolveMaxSpan(chainId));
 }
 
 function parsePositiveInteger(raw: string | undefined): number | null {
@@ -144,6 +176,23 @@ function parsePositiveInteger(raw: string | undefined): number | null {
   }
 
   return parsed;
+}
+
+function parseNonNegativeBigInt(raw: string | undefined): bigint | null {
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = BigInt(raw);
+    if (parsed < 0n) {
+      return null;
+    }
+
+    return parsed;
+  } catch (error) {
+    return null;
+  }
 }
 
 function parseBigintColumn(value: string | null): bigint | null {
@@ -191,6 +240,7 @@ function buildRecord(chainId: number, row: ChainConfigRow | undefined): ChainCon
     minSpan,
     maxSpan,
     updatedAt,
+    endpoints: [],
   };
 }
 
@@ -232,13 +282,10 @@ export async function fetchChainConfig(
   queryable?: Queryable,
 ): Promise<ChainConfigRecord> {
   const configs = await fetchChainConfigs(queryable);
-  const match = configs.find((config) => config.chainId === chainId);
+  const base = configs.find((config) => config.chainId === chainId) ?? buildRecord(chainId, undefined);
 
-  if (!match) {
-    return buildRecord(chainId, undefined);
-  }
-
-  return match;
+  const endpoints = await listChainEndpoints(chainId, { includeDisabled: true }, queryable);
+  return { ...base, endpoints };
 }
 
 export async function upsertChainConfig(
@@ -426,40 +473,20 @@ export interface ChainConfigSummary {
   };
 }
 
-export interface ChainEndpointRecord {
-  id: string;
-  chainId: number;
-  label: string;
-  url: string;
-  qps: number;
-  weight: number;
-  enabled: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-interface ChainEndpointRow {
-  id: string;
-  chain_id: number;
-  label: string;
-  url: string;
-  qps: number;
-  weight: number;
-  enabled: boolean;
-  created_at: Date;
-  updated_at: Date;
-}
-
 function mapChainEndpointRow(row: ChainEndpointRow): ChainEndpointRecord {
   return {
     id: row.id,
     chainId: row.chain_id,
-    label: row.label,
     url: row.url,
-    qps: row.qps,
-    weight: row.weight,
+    isPrimary: row.is_primary,
     enabled: row.enabled,
-    createdAt: row.created_at,
+    qps: row.qps,
+    minSpan: row.min_span,
+    maxSpan: row.max_span,
+    weight: row.weight,
+    orderIndex: row.order_index,
+    lastHealth: row.last_health,
+    lastCheckedAt: row.last_checked_at,
     updatedAt: row.updated_at,
   };
 }
@@ -473,20 +500,53 @@ export async function listChainEndpoints(
   const includeDisabled = options.includeDisabled ?? true;
 
   const result = await client.query<ChainEndpointRow>(
-    `SELECT id,
+    `SELECT id::TEXT AS id,
             chain_id,
-            label,
             url,
-            qps,
-            weight,
+            is_primary,
             enabled,
-            created_at,
+            qps,
+            min_span,
+            max_span,
+            weight,
+            order_index,
+            last_health,
+            last_checked_at,
             updated_at
        FROM chain_endpoints
       WHERE chain_id = $1
         ${includeDisabled ? "" : "AND enabled = TRUE"}
-      ORDER BY created_at ASC`,
+      ORDER BY is_primary DESC, order_index ASC, id::BIGINT ASC`,
     [chainId],
+  );
+
+  return result.rows.map(mapChainEndpointRow);
+}
+
+export async function listAllChainEndpoints(
+  options: { includeDisabled?: boolean } = {},
+  queryable?: Queryable,
+): Promise<ChainEndpointRecord[]> {
+  const client = getQueryable(queryable);
+  const includeDisabled = options.includeDisabled ?? true;
+
+  const result = await client.query<ChainEndpointRow>(
+    `SELECT id::TEXT AS id,
+            chain_id,
+            url,
+            is_primary,
+            enabled,
+            qps,
+            min_span,
+            max_span,
+            weight,
+            order_index,
+            last_health,
+            last_checked_at,
+            updated_at
+       FROM chain_endpoints
+      ${includeDisabled ? "" : "WHERE enabled = TRUE"}
+      ORDER BY chain_id ASC, is_primary DESC, order_index ASC, id::BIGINT ASC`,
   );
 
   return result.rows.map(mapChainEndpointRow);
@@ -494,24 +554,57 @@ export async function listChainEndpoints(
 
 export async function createChainEndpoint(
   chainId: number,
-  payload: { label: string; url: string; qps: number; weight: number; enabled: boolean },
+  payload: {
+    url: string;
+    isPrimary: boolean;
+    enabled: boolean;
+    qps: number;
+    minSpan: number;
+    maxSpan: number;
+    weight: number;
+    orderIndex: number;
+  },
   queryable?: Queryable,
 ): Promise<ChainEndpointRecord> {
   const client = getQueryable(queryable);
 
   const result = await client.query<ChainEndpointRow>(
-    `INSERT INTO chain_endpoints (chain_id, label, url, qps, weight, enabled)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id,
+    `INSERT INTO chain_endpoints (
+        chain_id,
+        url,
+        is_primary,
+        enabled,
+        qps,
+        min_span,
+        max_span,
+        weight,
+        order_index
+      )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     RETURNING id::TEXT AS id,
                chain_id,
-               label,
                url,
-               qps,
-               weight,
+               is_primary,
                enabled,
-               created_at,
+               qps,
+               min_span,
+               max_span,
+               weight,
+               order_index,
+               last_health,
+               last_checked_at,
                updated_at`,
-    [chainId, payload.label, payload.url, payload.qps, payload.weight, payload.enabled],
+    [
+      chainId,
+      payload.url,
+      payload.isPrimary,
+      payload.enabled,
+      payload.qps,
+      payload.minSpan,
+      payload.maxSpan,
+      payload.weight,
+      payload.orderIndex,
+    ],
   );
 
   return mapChainEndpointRow(result.rows[0]!);
@@ -520,7 +613,18 @@ export async function createChainEndpoint(
 export async function updateChainEndpoint(
   chainId: number,
   endpointId: string,
-  updates: Partial<{ label: string; url: string; qps: number; weight: number; enabled: boolean }>,
+  updates: Partial<{
+    url: string;
+    isPrimary: boolean;
+    enabled: boolean;
+    qps: number;
+    minSpan: number;
+    maxSpan: number;
+    weight: number;
+    orderIndex: number;
+    lastHealth: string | null;
+    lastCheckedAt: Date | null;
+  }>,
   queryable?: Queryable,
 ): Promise<ChainEndpointRecord | null> {
   if (Object.keys(updates).length === 0) {
@@ -532,30 +636,44 @@ export async function updateChainEndpoint(
 
   const result = await client.query<ChainEndpointRow>(
     `UPDATE chain_endpoints
-        SET label = COALESCE($3, label),
-            url = COALESCE($4, url),
-            qps = COALESCE($5, qps),
-            weight = COALESCE($6, weight),
-            enabled = COALESCE($7, enabled),
+        SET url = COALESCE($3, url),
+            is_primary = COALESCE($4, is_primary),
+            enabled = COALESCE($5, enabled),
+            qps = COALESCE($6, qps),
+            min_span = COALESCE($7, min_span),
+            max_span = COALESCE($8, max_span),
+            weight = COALESCE($9, weight),
+            order_index = COALESCE($10, order_index),
+            last_health = COALESCE($11, last_health),
+            last_checked_at = COALESCE($12, last_checked_at),
             updated_at = NOW()
       WHERE chain_id = $1 AND id = $2
-      RETURNING id,
+      RETURNING id::TEXT AS id,
                 chain_id,
-                label,
                 url,
-                qps,
-                weight,
+                is_primary,
                 enabled,
-                created_at,
+                qps,
+                min_span,
+                max_span,
+                weight,
+                order_index,
+                last_health,
+                last_checked_at,
                 updated_at`,
     [
       chainId,
       endpointId,
-      updates.label ?? null,
       updates.url ?? null,
-      updates.qps ?? null,
-      updates.weight ?? null,
+      updates.isPrimary ?? null,
       updates.enabled ?? null,
+      updates.qps ?? null,
+      updates.minSpan ?? null,
+      updates.maxSpan ?? null,
+      updates.weight ?? null,
+      updates.orderIndex ?? null,
+      updates.lastHealth ?? null,
+      updates.lastCheckedAt ?? null,
     ],
   );
 
@@ -582,14 +700,18 @@ export async function getChainEndpoint(
   const client = getQueryable(queryable);
 
   const result = await client.query<ChainEndpointRow>(
-    `SELECT id,
+    `SELECT id::TEXT AS id,
             chain_id,
-            label,
             url,
-            qps,
-            weight,
+            is_primary,
             enabled,
-            created_at,
+            qps,
+            min_span,
+            max_span,
+            weight,
+            order_index,
+            last_health,
+            last_checked_at,
             updated_at
        FROM chain_endpoints
       WHERE chain_id = $1 AND id = $2`,

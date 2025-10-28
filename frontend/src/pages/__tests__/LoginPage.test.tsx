@@ -37,7 +37,7 @@ function renderLogin(initialPath = "/login", state?: unknown) {
         <AuthProvider>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
-            <Route path="/admin" element={<div>Admin dashboard</div>} />
+            <Route path="/admin/*" element={<div>Admin dashboard</div>} />
           </Routes>
         </AuthProvider>
       </SWRConfig>

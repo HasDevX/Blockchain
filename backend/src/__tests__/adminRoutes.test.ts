@@ -3,7 +3,11 @@ import jwt from "jsonwebtoken";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Pool } from "pg";
-import type { ChainConfigRecord, IndexJobRecord } from "../services/chainConfigService";
+import type {
+  ChainConfigRecord,
+  ChainEndpointRecord,
+  IndexJobRecord,
+} from "../services/chainConfigService";
 
 describe("Admin API routes", () => {
   const chainConfigRecord: ChainConfigRecord = {
@@ -19,6 +23,23 @@ describe("Admin API routes", () => {
     minSpan: 10,
     maxSpan: 100,
     updatedAt: new Date("2024-01-01T00:00:00.000Z"),
+    endpoints: [],
+  };
+
+  const chainEndpointRecord: ChainEndpointRecord = {
+    id: "endpoint-1",
+    chainId: 137,
+    url: "https://polygon-rpc.second",
+    isPrimary: true,
+    enabled: true,
+    qps: 10,
+    minSpan: 8,
+    maxSpan: 1000,
+    weight: 1,
+    orderIndex: 0,
+    lastHealth: "ok",
+    lastCheckedAt: new Date("2024-01-01T00:05:00.000Z"),
+    updatedAt: new Date("2024-01-01T00:10:00.000Z"),
   };
 
   const chainConfigSummary = {
@@ -71,6 +92,12 @@ describe("Admin API routes", () => {
   let getAdminStatusMock: ReturnType<typeof vi.fn>;
   let summarizeJobsMock: ReturnType<typeof vi.fn>;
   let withTransactionMock: ReturnType<typeof vi.fn>;
+  let listAllChainEndpointsMock: ReturnType<typeof vi.fn>;
+  let createChainEndpointMock: ReturnType<typeof vi.fn>;
+  let getChainEndpointMock: ReturnType<typeof vi.fn>;
+  let updateChainEndpointMock: ReturnType<typeof vi.fn>;
+  let disableChainEndpointMock: ReturnType<typeof vi.fn>;
+  let invalidateChainConfigCacheMock: ReturnType<typeof vi.fn>;
   let createApp: (typeof import("../app"))["createApp"];
   let app: Awaited<ReturnType<typeof createApp>>;
   let authHeader: string;
@@ -92,6 +119,33 @@ describe("Admin API routes", () => {
     toChainConfigSummaryMock = vi.fn(() => [chainConfigSummary]);
     upsertChainConfigMock = vi.fn(async () => chainConfigRecord);
     createIndexJobMock = vi.fn(async () => indexJobRecord);
+    listAllChainEndpointsMock = vi.fn(async () => [chainEndpointRecord]);
+    createChainEndpointMock = vi.fn(async () => ({
+      ...chainEndpointRecord,
+      id: "endpoint-2",
+      url: "https://polygon-rpc.new",
+      isPrimary: false,
+      qps: 1,
+      minSpan: 8,
+      maxSpan: 1000,
+      weight: 1,
+      orderIndex: 0,
+      lastHealth: null,
+      lastCheckedAt: null,
+      updatedAt: new Date("2024-01-01T00:20:00.000Z"),
+    }));
+    getChainEndpointMock = vi.fn(async () => chainEndpointRecord);
+    updateChainEndpointMock = vi.fn(async () => ({
+      ...chainEndpointRecord,
+      qps: 20,
+      maxSpan: 1200,
+      updatedAt: new Date("2024-01-01T00:30:00.000Z"),
+    }));
+    disableChainEndpointMock = vi.fn(async () => ({
+      ...chainEndpointRecord,
+      enabled: false,
+      updatedAt: new Date("2024-01-01T00:40:00.000Z"),
+    }));
     enqueueReindexMock = vi.fn(async () => undefined);
     getAdminStatusMock = vi.fn(async () => ({
       chains: [
@@ -117,6 +171,7 @@ describe("Admin API routes", () => {
     withTransactionMock = vi.fn(async (handler: (client: unknown) => Promise<unknown>) => {
       return handler({});
     });
+    invalidateChainConfigCacheMock = vi.fn();
 
     vi.doMock("../lib/db", () => ({
       getPool: vi.fn(() => ({}) as unknown as Pool),
@@ -129,6 +184,11 @@ describe("Admin API routes", () => {
       toChainConfigSummary: toChainConfigSummaryMock,
       upsertChainConfig: upsertChainConfigMock,
       createIndexJob: createIndexJobMock,
+      listAllChainEndpoints: listAllChainEndpointsMock,
+      createChainEndpoint: createChainEndpointMock,
+      getChainEndpoint: getChainEndpointMock,
+      updateChainEndpoint: updateChainEndpointMock,
+      disableChainEndpoint: disableChainEndpointMock,
     }));
 
     vi.doMock("../services/tokenHolderRepository", () => ({
@@ -138,6 +198,10 @@ describe("Admin API routes", () => {
     vi.doMock("../services/adminDashboardService", () => ({
       getAdminStatus: getAdminStatusMock,
       summarizeJobs: summarizeJobsMock,
+    }));
+
+    vi.doMock("../services/chainConfigProvider", () => ({
+      invalidateChainConfigCache: invalidateChainConfigCacheMock,
     }));
 
     ({ createApp } = await import("../app"));
@@ -238,6 +302,247 @@ describe("Admin API routes", () => {
       expect(response.body.chains).toHaveLength(1);
       expect(response.body.jobs).toHaveLength(1);
       expect(getAdminStatusMock).toHaveBeenCalled();
+    });
+  });
+
+  describe("GET /api/admin/connections", () => {
+    it("requires authentication", async () => {
+      const response = await request(app).get("/api/admin/connections");
+      expect(response.status).toBe(401);
+    });
+
+    it("returns serialized chains and endpoints", async () => {
+      const response = await request(app)
+        .get("/api/admin/connections")
+        .set("Authorization", authHeader);
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({
+        chains: [
+          {
+            chain_id: 137,
+            name: "Polygon",
+            endpoints: [
+              {
+                id: "endpoint-1",
+                chain_id: 137,
+                url: "https://polygon-rpc.second",
+                is_primary: true,
+                enabled: true,
+                qps: 10,
+                min_span: 8,
+                max_span: 1000,
+                weight: 1,
+                order_index: 0,
+                last_health: "ok",
+                last_checked_at: "2024-01-01T00:05:00.000Z",
+                updated_at: "2024-01-01T00:10:00.000Z",
+              },
+            ],
+          },
+        ],
+      });
+      expect(fetchChainConfigsMock).toHaveBeenCalled();
+      expect(listAllChainEndpointsMock).toHaveBeenCalledWith({ includeDisabled: true });
+    });
+  });
+
+  describe("POST /api/admin/chains/:chainId/endpoints", () => {
+    it("requires authentication", async () => {
+      const response = await request(app).post("/api/admin/chains/137/endpoints");
+      expect(response.status).toBe(401);
+      expect(createChainEndpointMock).not.toHaveBeenCalled();
+    });
+
+    it("creates endpoint with defaults and invalidates cache", async () => {
+      const response = await request(app)
+        .post("/api/admin/chains/137/endpoints")
+        .set("Authorization", authHeader)
+        .send({ url: "https://polygon-rpc.new" });
+
+      expect(response.status).toBe(201);
+      expect(createChainEndpointMock).toHaveBeenCalledWith(137, {
+        url: "https://polygon-rpc.new",
+        isPrimary: false,
+        enabled: true,
+        qps: 1,
+        minSpan: 8,
+        maxSpan: 1000,
+        weight: 1,
+        orderIndex: 0,
+      });
+      expect(invalidateChainConfigCacheMock).toHaveBeenCalled();
+      expect(response.body).toEqual({
+        endpoint: {
+          id: "endpoint-2",
+          chain_id: 137,
+          url: "https://polygon-rpc.new",
+          is_primary: false,
+          enabled: true,
+          qps: 1,
+          min_span: 8,
+          max_span: 1000,
+          weight: 1,
+          order_index: 0,
+          last_health: null,
+          last_checked_at: null,
+          updated_at: "2024-01-01T00:20:00.000Z",
+        },
+      });
+    });
+  });
+
+  describe("PUT /api/admin/chains/:chainId/endpoints/:endpointId", () => {
+    it("requires authentication", async () => {
+      const response = await request(app).put("/api/admin/chains/137/endpoints/endpoint-1");
+      expect(response.status).toBe(401);
+      expect(updateChainEndpointMock).not.toHaveBeenCalled();
+    });
+
+    it("validates existence and updates endpoint", async () => {
+      const response = await request(app)
+        .put("/api/admin/chains/137/endpoints/endpoint-1")
+        .set("Authorization", authHeader)
+        .send({ qps: 20, max_span: 1200 });
+
+      expect(response.status).toBe(200);
+      expect(getChainEndpointMock).toHaveBeenCalledWith(137, "endpoint-1");
+      expect(updateChainEndpointMock).toHaveBeenCalledWith(137, "endpoint-1", {
+        qps: 20,
+        maxSpan: 1200,
+      });
+      expect(invalidateChainConfigCacheMock).toHaveBeenCalled();
+      expect(response.body).toEqual({
+        endpoint: {
+          id: "endpoint-1",
+          chain_id: 137,
+          url: "https://polygon-rpc.second",
+          is_primary: true,
+          enabled: true,
+          qps: 20,
+          min_span: 8,
+          max_span: 1200,
+          weight: 1,
+          order_index: 0,
+          last_health: "ok",
+          last_checked_at: "2024-01-01T00:05:00.000Z",
+          updated_at: "2024-01-01T00:30:00.000Z",
+        },
+      });
+    });
+
+    it("returns 404 when endpoint missing", async () => {
+      getChainEndpointMock.mockResolvedValueOnce(null);
+
+      const response = await request(app)
+        .put("/api/admin/chains/137/endpoints/unknown")
+        .set("Authorization", authHeader)
+        .send({ qps: 20 });
+
+      expect(response.status).toBe(404);
+      expect(response.body).toEqual({ error: "endpoint_not_found" });
+    });
+  });
+
+  describe("DELETE /api/admin/chains/:chainId/endpoints/:endpointId", () => {
+    it("requires authentication", async () => {
+      const response = await request(app).delete("/api/admin/chains/137/endpoints/endpoint-1");
+      expect(response.status).toBe(401);
+      expect(disableChainEndpointMock).not.toHaveBeenCalled();
+    });
+
+    it("disables endpoint and invalidates cache", async () => {
+      const response = await request(app)
+        .delete("/api/admin/chains/137/endpoints/endpoint-1")
+        .set("Authorization", authHeader);
+
+      expect(response.status).toBe(204);
+      expect(disableChainEndpointMock).toHaveBeenCalledWith(137, "endpoint-1");
+      expect(invalidateChainConfigCacheMock).toHaveBeenCalled();
+    });
+
+    it("returns 404 when endpoint missing", async () => {
+      disableChainEndpointMock.mockResolvedValueOnce(null);
+
+      const response = await request(app)
+        .delete("/api/admin/chains/137/endpoints/unknown")
+        .set("Authorization", authHeader);
+
+      expect(response.status).toBe(404);
+      expect(response.body).toEqual({ error: "endpoint_not_found" });
+    });
+  });
+
+  describe("POST /api/admin/test-rpc", () => {
+    it("requires authentication", async () => {
+      const response = await request(app).post("/api/admin/test-rpc");
+      expect(response.status).toBe(401);
+    });
+
+    it("returns latency and tip on success", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2024-01-01T00:00:00.000Z"));
+
+      const fetchSpy = vi.fn();
+      vi.stubGlobal("fetch", fetchSpy);
+      fetchSpy.mockImplementation(async () => {
+        vi.advanceTimersByTime(600);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ jsonrpc: "2.0", id: 1, result: "0x10" }),
+        } as unknown;
+      });
+
+      try {
+        const response = await request(app)
+          .post("/api/admin/test-rpc")
+          .set("Authorization", authHeader)
+          .send({ url: "https://rpc.example" });
+
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual({ ok: true, tip: "0x10", latency_ms: 600 });
+        expect(fetchSpy).toHaveBeenCalledWith("https://rpc.example", expect.anything());
+      } finally {
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("returns http error payload when rpc rejects", async () => {
+      const fetchSpy = vi.fn();
+      vi.stubGlobal("fetch", fetchSpy);
+      fetchSpy.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        json: async () => ({}),
+      } as unknown);
+
+      const response = await request(app)
+        .post("/api/admin/test-rpc")
+        .set("Authorization", authHeader)
+        .send({ url: "https://rpc.example" });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ ok: false, error: "http_error", status: 500 });
+
+      vi.unstubAllGlobals();
+    });
+
+    it("maps network errors", async () => {
+      const fetchSpy = vi.fn();
+      vi.stubGlobal("fetch", fetchSpy);
+      fetchSpy.mockRejectedValueOnce(new Error("boom"));
+
+      const response = await request(app)
+        .post("/api/admin/test-rpc")
+        .set("Authorization", authHeader)
+        .send({ url: "https://rpc.example" });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ ok: false, error: "network_error", message: "boom" });
+
+      vi.unstubAllGlobals();
     });
   });
 });

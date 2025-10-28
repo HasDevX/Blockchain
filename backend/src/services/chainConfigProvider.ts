@@ -1,6 +1,6 @@
 import { getPool } from "../lib/db";
-import type { ChainConfigRecord } from "./chainConfigService";
-import { fetchChainConfigs } from "./chainConfigService";
+import type { ChainConfigRecord, ChainEndpointRecord } from "./chainConfigService";
+import { fetchChainConfigs, listAllChainEndpoints } from "./chainConfigService";
 
 const CACHE_TTL_MS = 30_000;
 
@@ -13,7 +13,17 @@ let loadingPromise: Promise<ChainConfigRecord[]> | null = null;
 
 async function loadConfigs(): Promise<ChainConfigRecord[]> {
   const pool = getPool();
-  return fetchChainConfigs(pool);
+  const [configs, endpoints] = await Promise.all([
+    fetchChainConfigs(pool),
+    listAllChainEndpoints({ includeDisabled: false }, pool),
+  ]);
+
+  const grouped = groupEndpoints(endpoints);
+
+  return configs.map((config) => ({
+    ...config,
+    endpoints: grouped.get(config.chainId) ?? [],
+  }));
 }
 
 async function resolveConfigs(): Promise<ChainConfigRecord[]> {
@@ -68,4 +78,20 @@ export async function getRuntimeChainConfigs(): Promise<ChainConfigRecord[]> {
 
 export function invalidateChainConfigCache(): void {
   cache = null;
+}
+
+function groupEndpoints(endpoints: ChainEndpointRecord[]): Map<number, ChainEndpointRecord[]> {
+  const map = new Map<number, ChainEndpointRecord[]>();
+
+  for (const endpoint of endpoints) {
+    const existing = map.get(endpoint.chainId);
+
+    if (existing) {
+      existing.push(endpoint);
+    } else {
+      map.set(endpoint.chainId, [endpoint]);
+    }
+  }
+
+  return map;
 }

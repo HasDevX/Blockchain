@@ -3,9 +3,9 @@ import { RateLimitRequestHandler } from "express-rate-limit";
 import { requireAdmin, requireAuth } from "../../middleware/auth";
 import { getAdminStatus } from "../../services/adminDashboardService";
 import { createChainConfigsRouter } from "../admin/chainConfigs";
-import { createChainEndpointsRouter } from "../admin/chainEndpoints";
 import { createIndexJobsRouter } from "../admin/indexJobs";
 import { createTestRpcRouter } from "../admin/testRpc";
+import { registerConnectionRoutes } from "../admin/connections";
 
 export function createAdminRouter(adminLimiter: RateLimitRequestHandler) {
   const router = Router();
@@ -31,9 +31,9 @@ export function createAdminRouter(adminLimiter: RateLimitRequestHandler) {
   });
 
   router.use("/chain-configs", createChainConfigsRouter());
-  router.use("/chain-endpoints", createChainEndpointsRouter());
   router.use("/index-jobs", createIndexJobsRouter());
   router.use("/test-rpc", createTestRpcRouter());
+  registerConnectionRoutes(router);
 
   router.get("/status", async (_req: Request, res: Response) => {
     try {

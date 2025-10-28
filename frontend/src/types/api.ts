@@ -130,3 +130,44 @@ export interface AdminSettings {
     announcement: string | null;
   };
 }
+
+export interface AdminConnectionEndpoint {
+  id: string;
+  chainId: number;
+  url: string;
+  isPrimary: boolean;
+  enabled: boolean;
+  qps: number;
+  minSpan: number;
+  maxSpan: number;
+  weight: number;
+  orderIndex: number;
+  lastHealth: string | null;
+  lastCheckedAt: string | null;
+  updatedAt: string;
+}
+
+export interface AdminConnectionChain {
+  chainId: number;
+  name: string;
+  endpoints: AdminConnectionEndpoint[];
+}
+
+export interface AdminConnectionsResponse {
+  chains: AdminConnectionChain[];
+}
+
+export type AdminRpcTestResult = AdminRpcTestSuccess | AdminRpcTestFailure;
+
+export interface AdminRpcTestSuccess {
+  ok: true;
+  tip: string;
+  latencyMs: number;
+}
+
+export interface AdminRpcTestFailure {
+  ok: false;
+  error: string;
+  message?: string;
+  status?: number;
+}

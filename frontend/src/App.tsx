@@ -9,7 +9,9 @@ import { TokensPage } from "./pages/Tokens";
 import { TokenPage } from "./pages/Token";
 import { TransactionPage } from "./pages/Transaction";
 import { AddressPage } from "./pages/Address";
+import { AdminLayout } from "./pages/AdminLayout";
 import { AdminSettingsPage } from "./pages/AdminSettings";
+import { AdminConnectionsPage } from "./pages/AdminConnections";
 import { LoginPage } from "./pages/Login";
 import { useChains } from "./hooks/useChains";
 import type { Chain } from "./types/api";
@@ -157,7 +159,11 @@ function Shell() {
           <Route path="/tx/:hash" element={<TransactionPage />} />
           <Route path="/address/:address" element={<AddressPage />} />
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/admin" element={<AdminSettingsPage />} />
+          <Route path="/admin/*" element={<AdminLayout />}>
+            <Route index element={<Navigate to="settings" replace />} />
+            <Route path="settings" element={<AdminSettingsPage />} />
+            <Route path="connections" element={<AdminConnectionsPage />} />
+          </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
