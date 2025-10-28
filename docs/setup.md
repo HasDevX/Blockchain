@@ -117,6 +117,7 @@
 8. **Enable systemd services**
    ```bash
    sudo cp ops/systemd/explorertoken-backend.service /etc/systemd/system/
+   sudo cp ops/systemd/explorertoken-holders-indexer.service /etc/systemd/system/
    sudo systemctl daemon-reload
    sudo systemctl enable explorertoken-backend
    sudo systemctl restart explorertoken-backend
@@ -126,6 +127,11 @@
    sudo systemctl enable --now explorertoken-chain@137
    sudo systemctl enable --now explorertoken-chain@1
    sudo systemctl enable --now explorertoken-chain@42161
+   ```
+   Enable the holders indexer:
+   ```bash
+   sudo systemctl enable --now explorertoken-holders-indexer
+   sudo systemctl status explorertoken-holders-indexer --no-pager
    ```
 
 ## Acceptance checks
