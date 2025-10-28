@@ -1,7 +1,6 @@
 import cron from "node-cron";
 import type { ScheduledTask } from "node-cron";
 import { getPool, withTransaction } from "../lib/db";
-import { getRpcUrl } from "../config/rpc";
 import { RpcClient, RpcClientOptions, RpcRateLimitError } from "../lib/rpcClient";
 import {
   aggregateTransferDeltas,
@@ -25,7 +24,10 @@ import {
   resetSpanHints as resetSpanHintsInternal,
   resolveMaxSpan,
   shrinkSpan,
+  setSpanOverrides,
 } from "./adaptiveSpan";
+import type { ChainConfigRecord } from "../services/chainConfigService";
+import { getRuntimeChainConfig } from "../services/chainConfigProvider";
 
 export const resetSpanHints = resetSpanHintsInternal;
 
@@ -40,7 +42,6 @@ const RETRY_BASE_MS = (() => {
   const parsed = Number.parseInt(raw, 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : 1_500;
 })();
-const RPC_CLIENT_OPTIONS = buildRpcClientOptions();
 
 interface IndexStats {
   chainId: number;
@@ -71,9 +72,41 @@ function computeStartBlock(cursor: TokenCursor, latestBlock: bigint): bigint | n
   return fallbackStart;
 }
 
-export async function processCursor(cursor: TokenCursor): Promise<boolean> {
-  const rpcUrl = getRpcUrl(cursor.chainId);
-  const rpcClient = new RpcClient(rpcUrl, RPC_CLIENT_OPTIONS);
+export async function processCursor(
+  cursor: TokenCursor,
+  runtimeConfig?: ChainConfigRecord,
+): Promise<boolean> {
+  const chainConfig = runtimeConfig ?? (await getRuntimeChainConfig(cursor.chainId));
+
+  if (!chainConfig.enabled) {
+    console.log(
+      JSON.stringify({
+        event: "holders.indexer.skip",
+        chainId: cursor.chainId,
+        reason: "chain_disabled",
+      }),
+    );
+    return false;
+  }
+
+  if (!chainConfig.rpcUrl) {
+    console.error(
+      JSON.stringify({
+        event: "holders.indexer.error",
+        chainId: cursor.chainId,
+        token: normalizeAddress(cursor.token),
+        message: "rpc_url_missing",
+      }),
+    );
+    return false;
+  }
+
+  setSpanOverrides(cursor.chainId, {
+    min: BigInt(chainConfig.minSpan),
+    max: BigInt(chainConfig.maxSpan),
+  });
+
+  const rpcClient = new RpcClient(chainConfig.rpcUrl, buildRpcClientOptions(chainConfig));
 
   const latestBlock = await rpcClient.getBlockNumber();
   const startBlock = computeStartBlock(cursor, latestBlock);
@@ -160,16 +193,12 @@ export async function processCursor(cursor: TokenCursor): Promise<boolean> {
   return false;
 }
 
-function buildRpcClientOptions(): RpcClientOptions {
-  const qpsRaw = process.env.INDEXER_QPS;
+function buildRpcClientOptions(config: ChainConfigRecord): RpcClientOptions {
   const minDelayRaw = process.env.INDEXER_RPC_MIN_DELAY_MS;
   const options: RpcClientOptions = {};
 
-  if (qpsRaw) {
-    const parsed = Number.parseInt(qpsRaw, 10);
-    if (Number.isInteger(parsed) && parsed > 0) {
-      options.qps = parsed;
-    }
+  if (config.qps > 0) {
+    options.qps = config.qps;
   }
 
   if (minDelayRaw) {
@@ -260,10 +289,49 @@ async function runOnce(): Promise<boolean> {
   const pool = getPool();
   const cursors = await listTrackedTokens(pool);
   let didWork = false;
+  const configCache = new Map<number, ChainConfigRecord>();
+  const disabledChains = new Set<number>();
+  const missingRpcChains = new Set<number>();
 
   for (const cursor of cursors) {
+    if (disabledChains.has(cursor.chainId) || missingRpcChains.has(cursor.chainId)) {
+      continue;
+    }
+
+    let chainConfig = configCache.get(cursor.chainId);
+
+    if (!chainConfig) {
+      chainConfig = await getRuntimeChainConfig(cursor.chainId);
+      configCache.set(cursor.chainId, chainConfig);
+    }
+
+    if (!chainConfig.enabled) {
+      disabledChains.add(cursor.chainId);
+      console.log(
+        JSON.stringify({
+          event: "holders.indexer.skip",
+          chainId: cursor.chainId,
+          reason: "chain_disabled",
+        }),
+      );
+      continue;
+    }
+
+    if (!chainConfig.rpcUrl) {
+      missingRpcChains.add(cursor.chainId);
+      console.error(
+        JSON.stringify({
+          event: "holders.indexer.error",
+          chainId: cursor.chainId,
+          token: normalizeAddress(cursor.token),
+          message: "rpc_url_missing",
+        }),
+      );
+      continue;
+    }
+
     try {
-      const processed = await processCursor(cursor);
+      const processed = await processCursor(cursor, chainConfig);
       didWork = didWork || processed;
     } catch (error) {
       if (error instanceof RpcRateLimitError) {

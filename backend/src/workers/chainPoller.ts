@@ -36,7 +36,10 @@ import {
   rememberSpan,
   resolveMaxSpan,
   shrinkSpan,
+  setSpanOverrides,
 } from "./adaptiveSpan";
+import type { ChainConfigRecord } from "../services/chainConfigService";
+import { getRuntimeChainConfig } from "../services/chainConfigProvider";
 
 const RETRY_BASE_MS = Math.max(parseIntegerEnv("INDEXER_BACKOFF_MS", 1_500), 100);
 const DEFAULT_CONFIRMATIONS = parseIntegerEnv("CHAIN_POLLER_CONFIRMATIONS", 10);
@@ -59,7 +62,7 @@ interface ChainPollerConfig {
 }
 
 export class ChainPoller {
-  private readonly rpcClient: RpcClient;
+  private rpcClient: RpcClient;
   private readonly storeBatch: (batch: ExecutionBatch) => Promise<void>;
   private readonly getCheckpointFn: (chainId: number) => Promise<bigint | null>;
   private lastProcessed: bigint | null = null;
@@ -67,13 +70,21 @@ export class ChainPoller {
   private readonly mode: "live" | "backfill";
   private readonly targetBlock: bigint | null;
   private readonly useCheckpoint: boolean;
+  private runtimeConfig: ChainConfigRecord | null = null;
+  private lastAppliedSettings: {
+    rpcUrl: string;
+    qps: number;
+    minSpan: number;
+    maxSpan: number;
+  } | null = null;
+  private readinessState: "ready" | "disabled" | "missingRpc" | null = null;
 
   constructor(
     private readonly config: ChainPollerConfig,
     deps: ChainPollerDeps = {},
   ) {
     this.rpcClient =
-      deps.rpcClient ?? new RpcClient(getRpcUrl(config.chainId), buildRpcClientOptions());
+      deps.rpcClient ?? new RpcClient(getRpcUrl(config.chainId), buildRpcClientOptionsFromEnv());
     this.storeBatch = deps.storeBatch ?? storeExecutionBatch;
     this.getCheckpointFn = deps.getCheckpoint ?? getCheckpoint;
     this.mode = config.mode;
@@ -85,9 +96,65 @@ export class ChainPoller {
     this.stopped = true;
   }
 
+  private async refreshRuntimeConfig(): Promise<boolean> {
+    const runtimeConfig = await getRuntimeChainConfig(this.config.chainId);
+    this.runtimeConfig = runtimeConfig;
+
+    if (!runtimeConfig.enabled) {
+      if (this.readinessState !== "disabled") {
+        logPollerSkip(this.config.chainId, "chain_disabled");
+      }
+      this.readinessState = "disabled";
+      this.lastAppliedSettings = null;
+      return false;
+    }
+
+    if (!runtimeConfig.rpcUrl) {
+      if (this.readinessState !== "missingRpc") {
+        logPollerError(this.config.chainId, "rpc_url_missing");
+      }
+      this.readinessState = "missingRpc";
+      this.lastAppliedSettings = null;
+      return false;
+    }
+
+    setSpanOverrides(this.config.chainId, {
+      min: BigInt(runtimeConfig.minSpan),
+      max: BigInt(runtimeConfig.maxSpan),
+    });
+
+    const shouldRecreateClient =
+      !this.lastAppliedSettings ||
+      this.lastAppliedSettings.rpcUrl !== runtimeConfig.rpcUrl ||
+      this.lastAppliedSettings.qps !== runtimeConfig.qps;
+
+    if (shouldRecreateClient) {
+      this.rpcClient = new RpcClient(
+        runtimeConfig.rpcUrl,
+        buildRpcClientOptionsFromConfig(runtimeConfig),
+      );
+    }
+
+    this.lastAppliedSettings = {
+      rpcUrl: runtimeConfig.rpcUrl,
+      qps: runtimeConfig.qps,
+      minSpan: runtimeConfig.minSpan,
+      maxSpan: runtimeConfig.maxSpan,
+    };
+    this.readinessState = "ready";
+
+    return true;
+  }
+
   async run(): Promise<void> {
     while (!this.stopped) {
       try {
+        const ready = await this.refreshRuntimeConfig();
+        if (!ready) {
+          await sleep(this.config.pollIntervalMs);
+          continue;
+        }
+
         const didWork = await this.processNextBatch();
         if (!didWork) {
           if (this.mode === "backfill") {
@@ -219,7 +286,14 @@ export class ChainPoller {
       return this.lastProcessed + 1n;
     }
 
-    return this.config.startBlock;
+    const baseline = this.config.startBlock;
+    const runtimeStart = this.runtimeConfig?.startBlock ?? null;
+
+    if (runtimeStart !== null && runtimeStart > baseline) {
+      return runtimeStart;
+    }
+
+    return baseline;
   }
 
   private async collectBatch(fromBlock: bigint, toBlock: bigint): Promise<ExecutionBatch> {
@@ -513,7 +587,7 @@ function parseIntegerEnv(name: string, fallback: number): number {
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
-function buildRpcClientOptions(): RpcClientOptions | undefined {
+function buildRpcClientOptionsFromEnv(): RpcClientOptions | undefined {
   const qps = parseIntegerEnv("INDEXER_QPS", 0);
   const minDelay = parseIntegerEnv("INDEXER_RPC_MIN_DELAY_MS", 0);
   const options: RpcClientOptions = {};
@@ -533,8 +607,47 @@ function buildRpcClientOptions(): RpcClientOptions | undefined {
   return undefined;
 }
 
+function buildRpcClientOptionsFromConfig(config: ChainConfigRecord): RpcClientOptions | undefined {
+  const minDelay = parseIntegerEnv("INDEXER_RPC_MIN_DELAY_MS", 0);
+  const options: RpcClientOptions = {};
+
+  if (config.qps > 0) {
+    options.qps = config.qps;
+  }
+
+  if (minDelay > 0) {
+    options.minDelayMs = minDelay;
+  }
+
+  if (options.qps || options.minDelayMs) {
+    return options;
+  }
+
+  return undefined;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function logPollerSkip(chainId: number, reason: string): void {
+  console.log(
+    JSON.stringify({
+      event: "chain.poller.skip",
+      chainId,
+      reason,
+    }),
+  );
+}
+
+function logPollerError(chainId: number, message: string): void {
+  console.error(
+    JSON.stringify({
+      event: "chain.poller.error",
+      chainId,
+      message,
+    }),
+  );
 }
 
 function logBatch(details: {

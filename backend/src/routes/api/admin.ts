@@ -1,10 +1,11 @@
 import { Request, Response, Router } from "express";
 import { RateLimitRequestHandler } from "express-rate-limit";
 import { requireAdmin, requireAuth } from "../../middleware/auth";
-import { getPool } from "../../lib/db";
-import { getChainAdapter } from "../../config/chainAdapters";
-import { enqueueReindex } from "../../services/tokenHolderRepository";
-import { normalizeAddress } from "../../services/holderStore";
+import { getAdminStatus } from "../../services/adminDashboardService";
+import { createChainConfigsRouter } from "../admin/chainConfigs";
+import { createChainEndpointsRouter } from "../admin/chainEndpoints";
+import { createIndexJobsRouter } from "../admin/indexJobs";
+import { createTestRpcRouter } from "../admin/testRpc";
 
 export function createAdminRouter(adminLimiter: RateLimitRequestHandler) {
   const router = Router();
@@ -29,62 +30,19 @@ export function createAdminRouter(adminLimiter: RateLimitRequestHandler) {
     res.status(200).end();
   });
 
-  router.post("/reindex", async (req: Request, res: Response) => {
-    const { chainId, token, fromBlock } = req.body ?? {};
+  router.use("/chain-configs", createChainConfigsRouter());
+  router.use("/chain-endpoints", createChainEndpointsRouter());
+  router.use("/index-jobs", createIndexJobsRouter());
+  router.use("/test-rpc", createTestRpcRouter());
 
-    if (!Number.isFinite(chainId)) {
-      res.status(400).json({ error: "invalid_chain" });
-      return;
-    }
-
-    const adapter = getChainAdapter(Number(chainId));
-
-    if (!adapter || !adapter.supported) {
-      res.status(400).json({ error: "unsupported_chain" });
-      return;
-    }
-
-    if (typeof token !== "string" || token.length === 0) {
-      res.status(400).json({ error: "invalid_token" });
-      return;
-    }
-
-    let normalizedToken: string;
-
+  router.get("/status", async (_req: Request, res: Response) => {
     try {
-      normalizedToken = normalizeAddress(token);
+      const payload = await getAdminStatus();
+      res.json(payload);
     } catch (error) {
-      console.warn("invalid token address", error);
-      res.status(400).json({ error: "invalid_token" });
-      return;
+      console.error("failed to load admin status", error);
+      res.status(500).json({ error: "status_unavailable" });
     }
-
-    let startBlock: bigint | null = null;
-
-    if (fromBlock !== undefined && fromBlock !== null && `${fromBlock}`.trim().length > 0) {
-      try {
-        startBlock = BigInt(fromBlock);
-      } catch (error) {
-        console.warn("invalid fromBlock", error);
-        res.status(400).json({ error: "invalid_from_block" });
-        return;
-      }
-
-      if (startBlock < 0n) {
-        res.status(400).json({ error: "invalid_from_block" });
-        return;
-      }
-    }
-
-    try {
-      await enqueueReindex(getPool(), Number(chainId), normalizedToken, startBlock);
-    } catch (error) {
-      console.error("failed to enqueue reindex", error);
-      res.status(500).json({ error: "reindex_failed" });
-      return;
-    }
-
-    res.status(202).json({ ok: true });
   });
 
   return router;

@@ -5,9 +5,23 @@ const getBlockNumberMock = vi.fn<[], Promise<bigint>>();
 const getLogsMock = vi.fn();
 const applyHolderDeltasMock = vi.fn();
 const updateTokenCursorMock = vi.fn();
+const getRuntimeChainConfigMock = vi.fn(async () => ({
+  chainId: 1,
+  name: "Ethereum",
+  enabled: true,
+  rpcUrl: "https://rpc.test",
+  rpcSource: "env" as const,
+  etherscanApiKey: null,
+  etherscanSource: "none" as const,
+  startBlock: null,
+  qps: 10,
+  minSpan: 1_000,
+  maxSpan: 4_000,
+  updatedAt: new Date(),
+}));
 
-vi.mock("../config/rpc", () => ({
-  getRpcUrl: vi.fn(() => "https://rpc.test"),
+vi.mock("../services/chainConfigProvider", () => ({
+  getRuntimeChainConfig: getRuntimeChainConfigMock,
 }));
 
 vi.mock("../lib/db", () => ({
@@ -59,6 +73,7 @@ describe("holders indexer adaptive span", () => {
     getLogsMock.mockReset();
     applyHolderDeltasMock.mockReset();
     updateTokenCursorMock.mockReset();
+    getRuntimeChainConfigMock.mockClear();
 
     process.env.HOLDERS_INDEXER_SKIP_AUTOSTART = "true";
     process.env.INDEXER_MAX_SPAN_DEFAULT = "2000";

@@ -30,9 +30,23 @@ export const MAX_SPAN_RETRIES = 4;
 export const ADAPTIVE_RETRY_DELAY_MS = parsePositiveInteger(process.env.INDEXER_BACKOFF_MS, 300);
 
 const spanHints = new Map<number, bigint>();
+const spanOverrides = new Map<number, { min?: bigint; max?: bigint }>();
 
 export function resetSpanHints(): void {
   spanHints.clear();
+}
+
+export function setSpanOverrides(chainId: number, overrides: { min?: bigint; max?: bigint }): void {
+  spanOverrides.set(chainId, overrides);
+}
+
+export function clearSpanOverrides(chainId?: number): void {
+  if (typeof chainId === "number") {
+    spanOverrides.delete(chainId);
+    return;
+  }
+
+  spanOverrides.clear();
 }
 
 export function parsePositiveBigInt(value: string | undefined): bigint | null {
@@ -56,22 +70,32 @@ export function parsePositiveBigInt(value: string | undefined): bigint | null {
 const DEFAULT_MAX_SPAN = parsePositiveBigInt(process.env.INDEXER_MAX_SPAN_DEFAULT) ?? 2_000n;
 
 function resolveMinSpan(chainId: number): bigint {
-  const envKey = `INDEXER_MIN_SPAN_${chainId}`;
-  const override = parsePositiveBigInt(process.env[envKey]);
+  const overrideEntry = spanOverrides.get(chainId);
+  if (overrideEntry?.min !== undefined) {
+    return overrideEntry.min;
+  }
 
-  if (override) {
-    return override;
+  const envKey = `INDEXER_MIN_SPAN_${chainId}`;
+  const envOverride = parsePositiveBigInt(process.env[envKey]);
+
+  if (envOverride) {
+    return envOverride;
   }
 
   return DEFAULT_MIN_SPAN;
 }
 
 export function resolveMaxSpan(chainId: number): bigint {
-  const envKey = `INDEXER_MAX_SPAN_${chainId}`;
-  const override = parsePositiveBigInt(process.env[envKey]);
+  const overrideEntry = spanOverrides.get(chainId);
+  if (overrideEntry?.max !== undefined) {
+    return overrideEntry.max;
+  }
 
-  if (override) {
-    return override;
+  const envKey = `INDEXER_MAX_SPAN_${chainId}`;
+  const envOverride = parsePositiveBigInt(process.env[envKey]);
+
+  if (envOverride) {
+    return envOverride;
   }
 
   const configured = MAX_SPAN_BY_CHAIN[chainId as keyof typeof MAX_SPAN_BY_CHAIN];
