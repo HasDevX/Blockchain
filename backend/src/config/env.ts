@@ -6,6 +6,7 @@ dotenv.config();
 type NullableString = string | null | undefined;
 
 const DEFAULT_FRONTEND = "https://haswork.dev";
+const DEFAULT_ADMIN_EMAIL = "admin@haswork.dev";
 
 function parseOrigins(raw: NullableString): string[] {
   if (!raw) {
@@ -46,20 +47,25 @@ export function loadEnv(): AppEnv {
     REDIS_URL,
     FRONTEND_URL,
     ETHERSCAN_API_KEY,
-    ADMIN_EMAIL,
-    ADMIN_PASSWORD,
-    ADMIN_PASSWORD_BCRYPT_HASH,
-    JWT_SECRET,
   } = process.env;
 
-  const adminEmail = requireEnv("ADMIN_EMAIL", ADMIN_EMAIL).toLowerCase();
-  const adminPassword = normalizeOptional(ADMIN_PASSWORD);
-  const adminPasswordHash = normalizeOptional(ADMIN_PASSWORD_BCRYPT_HASH);
+  const adminEmail =
+    pickFirstDefined("ADMIN_EMAIL", "AUTH_ADMIN_EMAIL", "DASHBOARD_ADMIN_EMAIL")?.toLowerCase() ??
+    DEFAULT_ADMIN_EMAIL;
+  const adminPassword = normalizeOptional(
+    pickFirstDefined("ADMIN_PASSWORD", "AUTH_ADMIN_PASSWORD", "DASHBOARD_ADMIN_PASSWORD"),
+  );
+  const adminPasswordHash = normalizeOptional(
+    pickFirstDefined(
+      "ADMIN_PASSWORD_BCRYPT_HASH",
+      "AUTH_ADMIN_PASSWORD_BCRYPT_HASH",
+      "DASHBOARD_ADMIN_PASSWORD_BCRYPT_HASH",
+    ),
+  );
 
-  if (!adminPassword && !adminPasswordHash) {
-    throw new Error("ADMIN_PASSWORD or ADMIN_PASSWORD_BCRYPT_HASH must be configured");
-  }
-  const jwtSecret = requireEnv("JWT_SECRET", JWT_SECRET);
+  const jwtSecret =
+    normalizeOptional(pickFirstDefined("JWT_SECRET", "AUTH_JWT_SECRET", "DASHBOARD_JWT_SECRET")) ??
+    "dev-secret";
 
   cachedEnv = {
     nodeEnv: NODE_ENV ?? "development",
@@ -102,14 +108,6 @@ function buildRpcUrlMap(): Record<number, string> {
   return map;
 }
 
-function requireEnv(name: string, value: NullableString): string {
-  if (!value || value.trim().length === 0) {
-    throw new Error(`${name} must be configured`);
-  }
-
-  return value.trim();
-}
-
 function normalizeOptional(value: NullableString): string | undefined {
   if (!value) {
     return undefined;
@@ -117,4 +115,16 @@ function normalizeOptional(value: NullableString): string | undefined {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function pickFirstDefined(...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = process.env[key];
+
+    if (value && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+
+  return undefined;
 }

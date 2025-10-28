@@ -1,44 +1,14 @@
 BEGIN;
 
-CREATE TABLE IF NOT EXISTS users (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  email TEXT NOT NULL,
-  username TEXT,
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+CREATE TABLE IF NOT EXISTS public.users (
+  id SERIAL PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'admin',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  last_login_at TIMESTAMPTZ,
-  disabled_at TIMESTAMPTZ
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
 );
-
-ALTER TABLE users
-  ADD COLUMN IF NOT EXISTS id UUID DEFAULT gen_random_uuid(),
-  ADD COLUMN IF NOT EXISTS email TEXT,
-  ADD COLUMN IF NOT EXISTS username TEXT,
-  ADD COLUMN IF NOT EXISTS password_hash TEXT,
-  ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'admin',
-  ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW(),
-  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW(),
-  ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ;
-
-ALTER TABLE users
-  ALTER COLUMN id SET DEFAULT gen_random_uuid();
-
-ALTER TABLE users
-  ALTER COLUMN id SET NOT NULL,
-  ALTER COLUMN email SET NOT NULL,
-  ALTER COLUMN password_hash SET NOT NULL,
-  ALTER COLUMN role SET NOT NULL,
-  ALTER COLUMN created_at SET NOT NULL,
-  ALTER COLUMN updated_at SET NOT NULL;
-
-CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique_idx
-  ON users (LOWER(email));
-
-CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique_idx
-  ON users (LOWER(username))
-  WHERE username IS NOT NULL;
 
 COMMIT;

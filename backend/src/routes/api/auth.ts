@@ -2,7 +2,13 @@ import { Request, Response, Router } from "express";
 import { RateLimitRequestHandler } from "express-rate-limit";
 import jwt from "jsonwebtoken";
 import { loadEnv } from "../../config/env";
-import { dbFindUserByEmail, getEnvAdmin, safeEq, verifyPassword } from "../../lib/auth";
+import {
+  checkDbPassword,
+  dbFindUserByEmail,
+  getDefaultPool,
+  getEnvAdmin,
+  safeEq,
+} from "../../lib/auth";
 
 interface LoginRequestBody {
   email?: string;
@@ -31,40 +37,42 @@ export function createAuthRouter(loginLimiter: RateLimitRequestHandler) {
     }
 
     const env = loadEnv();
+    const pool = env.databaseUrl ? getDefaultPool() : null;
     const normalizedIdentifier = identifier.toLowerCase();
 
-    try {
-      const dbUser = await dbFindUserByEmail(identifier);
+    if (pool) {
+      try {
+        const dbUser = await dbFindUserByEmail(pool, identifier);
 
-      if (dbUser && dbUser.passwordHash) {
-        const passwordMatches = await verifyPassword(password, dbUser.passwordHash);
+        if (dbUser && dbUser.passwordHash) {
+          const passwordMatches = await checkDbPassword(password, dbUser.passwordHash);
 
-        if (passwordMatches) {
-          const token = jwt.sign(
-            {
-              sub: `user:${dbUser.id}`,
-              email: dbUser.email,
-              role: dbUser.role ?? "admin",
-            },
-            env.jwtSecret,
-            { expiresIn: TOKEN_EXPIRATION },
-          );
+          if (passwordMatches) {
+            const token = jwt.sign(
+              {
+                sub: `user:${dbUser.id}`,
+                email: dbUser.email,
+                role: dbUser.role ?? "admin",
+              },
+              env.jwtSecret,
+              { expiresIn: TOKEN_EXPIRATION },
+            );
 
-          res.json({
-            token,
-            user: {
-              id: dbUser.id,
-              email: dbUser.email,
-              username: dbUser.username,
-              role: dbUser.role ?? "admin",
-              source: "database" as const,
-            },
-          });
-          return;
+            res.json({
+              token,
+              user: {
+                id: dbUser.id,
+                email: dbUser.email,
+                role: dbUser.role ?? "admin",
+                source: "database" as const,
+              },
+            });
+            return;
+          }
         }
+      } catch (error) {
+        console.warn("login lookup failed for database user");
       }
-    } catch (error) {
-      console.warn("login lookup failed for database user");
     }
 
     const envAdmin = getEnvAdmin();
@@ -82,7 +90,7 @@ export function createAuthRouter(loginLimiter: RateLimitRequestHandler) {
     }
 
     if (!passwordMatches && envAdmin.passwordHash) {
-      passwordMatches = await verifyPassword(password, envAdmin.passwordHash);
+      passwordMatches = await checkDbPassword(password, envAdmin.passwordHash);
     }
 
     if (!identifierMatches || !passwordMatches) {
@@ -105,7 +113,6 @@ export function createAuthRouter(loginLimiter: RateLimitRequestHandler) {
       user: {
         id: "env-admin",
         email: envAdmin.email,
-        username: null,
         role: "admin",
         source: "env" as const,
       },

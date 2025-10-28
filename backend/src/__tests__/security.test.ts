@@ -3,6 +3,7 @@ import jwt, { JwtPayload } from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { describe, beforeAll, beforeEach, afterEach, it, expect, vi } from "vitest";
 import type { SpyInstance } from "vitest";
+import type { Pool } from "pg";
 import { CHAINS } from "../config/chains";
 import type { DbUserRecord } from "../lib/auth";
 
@@ -17,7 +18,7 @@ type AppFactory = (typeof import("../app"))["createApp"];
 let createApp: AppFactory;
 let app: Awaited<ReturnType<AppFactory>>;
 let authModule: typeof import("../lib/auth");
-let dbFindUserSpy: SpyInstance<[string], Promise<DbUserRecord | null>>;
+let dbFindUserSpy: SpyInstance<[Pool, string], Promise<DbUserRecord | null>>;
 
 beforeAll(async () => {
   process.env.NODE_ENV = "test";
@@ -112,9 +113,9 @@ describe("security middleware", () => {
     const dbUser: DbUserRecord = {
       id: "11111111-1111-1111-1111-111111111111",
       email: ADMIN_EMAIL,
-      username: "main-admin",
       passwordHash,
       role: "super-admin",
+      disabledAt: null,
     };
 
     dbFindUserSpy.mockResolvedValueOnce(dbUser);
@@ -127,7 +128,6 @@ describe("security middleware", () => {
       expect.objectContaining({
         id: dbUser.id,
         email: dbUser.email,
-        username: dbUser.username,
         role: dbUser.role,
         source: "database",
       }),
@@ -144,9 +144,9 @@ describe("security middleware", () => {
     const dbUser: DbUserRecord = {
       id: "22222222-2222-2222-2222-222222222222",
       email: ADMIN_EMAIL,
-      username: "primary-admin",
       passwordHash,
       role: null,
+      disabledAt: null,
     };
 
     dbFindUserSpy.mockResolvedValueOnce(dbUser);
@@ -158,9 +158,9 @@ describe("security middleware", () => {
     expect(response.body.user).toMatchObject({
       id: dbUser.id,
       email: dbUser.email,
-      username: dbUser.username,
       source: "database",
     });
+    expect(dbFindUserSpy).toHaveBeenCalledWith(expect.anything(), "primary-admin");
   });
 
   it("returns configured chain list", async () => {

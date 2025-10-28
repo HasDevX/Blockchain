@@ -19,17 +19,7 @@ async function resolvePasswordHash(
   return { passwordHash: hash, source: "generated" };
 }
 
-function resolveUsername(email: string): string {
-  const envUsername = process.env.ADMIN_USERNAME?.trim();
-  if (envUsername) {
-    return envUsername.toLowerCase();
-  }
-
-  const [localPart] = email.split("@");
-  return localPart.toLowerCase();
-}
-
-async function upsertAdminUser(email: string, passwordHash: string, username: string) {
+async function upsertAdminUser(email: string, passwordHash: string) {
   const pool = getPool();
   const client = await pool.connect();
 
@@ -50,18 +40,17 @@ async function upsertAdminUser(email: string, passwordHash: string, username: st
         `UPDATE public.users
             SET email = LOWER($1),
                 password_hash = $2,
-                username = COALESCE($3, username),
                 role = COALESCE(role, 'admin'),
                 disabled_at = NULL,
                 updated_at = NOW()
-          WHERE id = $4`,
-        [email, passwordHash, username, existing.rows[0].id],
+          WHERE id = $3`,
+        [email, passwordHash, existing.rows[0].id],
       );
     } else {
       await client.query(
-        `INSERT INTO public.users (email, username, password_hash, role)
-         VALUES ($1, $2, $3, 'admin')`,
-        [email.toLowerCase(), username, passwordHash],
+        `INSERT INTO public.users (email, password_hash, role)
+         VALUES (LOWER($1), $2, 'admin')`,
+        [email, passwordHash],
       );
     }
 
@@ -87,13 +76,12 @@ async function main() {
     throw new Error("Admin credentials are not configured");
   }
 
-  const username = resolveUsername(envAdmin.email);
   const { passwordHash, source } = await resolvePasswordHash(envAdmin);
 
-  await upsertAdminUser(envAdmin.email, passwordHash, username);
+  await upsertAdminUser(envAdmin.email, passwordHash);
 
   console.log(
-    `[bootstrap-admin] ensured admin user ${envAdmin.email} exists (username: ${username}, password: ${source}).`,
+    `BOOTSTRAP_OK email=${envAdmin.email} password_source=${source}`,
   );
 }
 
