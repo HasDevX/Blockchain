@@ -624,7 +624,7 @@ export async function updateChainEndpoint(
   endpointId: string,
   updates: Partial<{
     url: string;
-  label: string | null;
+    label: string | null;
     isPrimary: boolean;
     enabled: boolean;
     qps: number;
@@ -637,27 +637,75 @@ export async function updateChainEndpoint(
   }>,
   queryable?: Queryable,
 ): Promise<ChainEndpointRecord | null> {
-  if (Object.keys(updates).length === 0) {
-    const current = await getChainEndpoint(chainId, endpointId, queryable);
-    return current;
+  const client = getQueryable(queryable);
+
+  const assignments: string[] = [];
+  const values: unknown[] = [];
+  let hasUpdate = false;
+  let paramIndex = 3;
+
+  const pushAssignment = (column: string, value: unknown) => {
+    hasUpdate = true;
+    assignments.push(`${column} = $${paramIndex}`);
+    values.push(value);
+    paramIndex += 1;
+  };
+
+  if (updates.url !== undefined) {
+    pushAssignment("url", updates.url);
   }
 
-  const client = getQueryable(queryable);
+  if (updates.label !== undefined) {
+    pushAssignment("label", updates.label);
+  }
+
+  if (updates.isPrimary !== undefined) {
+    pushAssignment("is_primary", updates.isPrimary);
+  }
+
+  if (updates.enabled !== undefined) {
+    pushAssignment("enabled", updates.enabled);
+  }
+
+  if (updates.qps !== undefined) {
+    pushAssignment("qps", updates.qps);
+  }
+
+  if (updates.minSpan !== undefined) {
+    pushAssignment("min_span", updates.minSpan);
+  }
+
+  if (updates.maxSpan !== undefined) {
+    pushAssignment("max_span", updates.maxSpan);
+  }
+
+  if (updates.weight !== undefined) {
+    pushAssignment("weight", updates.weight);
+  }
+
+  if (updates.orderIndex !== undefined) {
+    pushAssignment("order_index", updates.orderIndex);
+  }
+
+  if (updates.lastHealth !== undefined) {
+    pushAssignment("last_health", updates.lastHealth);
+  }
+
+  if (updates.lastCheckedAt !== undefined) {
+    pushAssignment("last_checked_at", updates.lastCheckedAt);
+  }
+
+  if (!hasUpdate) {
+    return getChainEndpoint(chainId, endpointId, queryable);
+  }
+
+  assignments.push("updated_at = NOW()");
+
+  const setClause = assignments.join(",\n            ");
 
   const result = await client.query<ChainEndpointRow>(
     `UPDATE chain_endpoints
-        SET url = COALESCE($3, url),
-            label = COALESCE($4, label),
-            is_primary = COALESCE($5, is_primary),
-            enabled = COALESCE($6, enabled),
-            qps = COALESCE($7, qps),
-            min_span = COALESCE($8, min_span),
-            max_span = COALESCE($9, max_span),
-            weight = COALESCE($10, weight),
-            order_index = COALESCE($11, order_index),
-            last_health = COALESCE($12, last_health),
-            last_checked_at = COALESCE($13, last_checked_at),
-            updated_at = NOW()
+        SET ${setClause}
       WHERE chain_id = $1 AND id = $2
       RETURNING id::TEXT AS id,
                 chain_id,
@@ -673,21 +721,7 @@ export async function updateChainEndpoint(
                 last_health,
                 last_checked_at,
                 updated_at`,
-    [
-      chainId,
-      endpointId,
-      updates.url ?? null,
-      updates.label ?? null,
-      updates.isPrimary ?? null,
-      updates.enabled ?? null,
-      updates.qps ?? null,
-      updates.minSpan ?? null,
-      updates.maxSpan ?? null,
-      updates.weight ?? null,
-      updates.orderIndex ?? null,
-      updates.lastHealth ?? null,
-      updates.lastCheckedAt ?? null,
-    ],
+    [chainId, endpointId, ...values],
   );
 
   if (result.rowCount === 0) {
