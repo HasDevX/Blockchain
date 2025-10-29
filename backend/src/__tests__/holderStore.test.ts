@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import { describe, expect, it } from "vitest";
 import {
+  InvalidTransferValueError,
   applyHolderDeltas,
   aggregateTransferDeltas,
   decodeTransferLogs,
@@ -134,5 +135,24 @@ describe("holderStore", () => {
     expect(client.getBalance(chainId, token, holderB)).toBe("75");
     expect(client.getBalance(chainId, token, holderC)).toBe("50");
     expect(client.getBalance(chainId, token, holderD)).toBe("25");
+  });
+
+  it("throws when transfer log value is invalid hex", () => {
+    const token = "0x0000000000000000000000000000000000000abc";
+    const holder = "0x00000000000000000000000000000000000000a1";
+
+    const logs: RpcLog[] = [
+      {
+        address: token,
+        topics: [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+          topicFor(holder),
+          topicFor(holder),
+        ],
+        data: "0x",
+      },
+    ];
+
+    expect(() => decodeTransferLogs(logs)).toThrow(InvalidTransferValueError);
   });
 });

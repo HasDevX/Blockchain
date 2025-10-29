@@ -1,4 +1,5 @@
 import { PoolClient } from "pg";
+import { safeHexToBigInt } from "../lib/hex";
 
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 export const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
@@ -14,6 +15,13 @@ export interface RpcLog {
   topics: string[];
   data: string;
   removed?: boolean;
+}
+
+export class InvalidTransferValueError extends Error {
+  constructor(readonly value: string | null | undefined) {
+    super(`invalid transfer log value: ${value ?? "null"}`);
+    this.name = "InvalidTransferValueError";
+  }
 }
 
 export function normalizeAddress(address: string): string {
@@ -82,11 +90,17 @@ export function decodeTransferLogs(logs: RpcLog[]): TransferLog[] {
 }
 
 export function decodeValue(data: string): bigint {
-  if (typeof data !== "string" || !data.startsWith("0x")) {
-    throw new Error(`invalid log data: ${data}`);
+  if (typeof data !== "string") {
+    throw new InvalidTransferValueError(data);
   }
 
-  return BigInt(data);
+  const parsed = safeHexToBigInt(data);
+
+  if (parsed === null) {
+    throw new InvalidTransferValueError(data);
+  }
+
+  return parsed;
 }
 
 export function aggregateTransferDeltas(transfers: TransferLog[]): Map<string, bigint> {

@@ -16,6 +16,7 @@ import {
   addressToBuffer,
   aggregateTransferDeltas,
   decodeTransferLogs,
+  InvalidTransferValueError,
   normalizeAddress,
   TRANSFER_TOPIC,
   type RpcLog,
@@ -49,6 +50,10 @@ import { getRuntimeChainConfig } from "../services/chainConfigProvider";
 const RETRY_BASE_MS = Math.max(parseIntegerEnv("INDEXER_BACKOFF_MS", 1_500), 100);
 const DEFAULT_CONFIRMATIONS = parseIntegerEnv("CHAIN_POLLER_CONFIRMATIONS", 10);
 const DEFAULT_POLL_INTERVAL_MS = parseIntegerEnv("CHAIN_POLLER_INTERVAL_MS", 5_000);
+const ENDPOINT_FAILURE_COOLDOWN_MS = Math.max(
+  parseIntegerEnv("CHAIN_POLLER_ENDPOINT_COOLDOWN_MS", 300_000),
+  30_000,
+);
 
 interface ChainPollerDeps {
   rpcClient?: RpcClient;
@@ -150,8 +155,14 @@ export class ChainPoller {
     }
 
     const endpointMap = new Map(config.endpoints.map((endpoint) => [endpoint.id, endpoint]));
+    const now = Date.now();
 
     for (const [endpointId, failedAt] of this.failedEndpoints) {
+      if (failedAt + ENDPOINT_FAILURE_COOLDOWN_MS <= now) {
+        this.failedEndpoints.delete(endpointId);
+        continue;
+      }
+
       const match = endpointMap.get(endpointId);
 
       if (!match) {
@@ -167,15 +178,9 @@ export class ChainPoller {
 
   private selectEndpoint(config: ChainConfigRecord): EndpointSelection | null {
     if (config.endpoints.length > 0) {
-      for (const endpoint of config.endpoints) {
-        if (this.failedEndpoints.has(endpoint.id)) {
-          continue;
-        }
-
-        if (!endpoint.enabled) {
-          continue;
-        }
-
+      const candidates = this.getEndpointCandidates(config);
+      if (candidates.length > 0) {
+        const endpoint = candidates[0];
         return { endpoint, url: endpoint.url };
       }
 
@@ -187,6 +192,26 @@ export class ChainPoller {
     }
 
     return null;
+  }
+
+  private getEndpointCandidates(config: ChainConfigRecord): ChainEndpointRecord[] {
+    return config.endpoints
+      .filter((endpoint) => endpoint.enabled && !this.failedEndpoints.has(endpoint.id))
+      .sort((a, b) => {
+        if (a.isPrimary !== b.isPrimary) {
+          return a.isPrimary ? -1 : 1;
+        }
+
+        if (a.orderIndex !== b.orderIndex) {
+          return a.orderIndex - b.orderIndex;
+        }
+
+        if (a.weight !== b.weight) {
+          return b.weight - a.weight;
+        }
+
+        return a.id.localeCompare(b.id);
+      });
   }
 
   private applySelection(config: ChainConfigRecord, selection: EndpointSelection): void {
@@ -277,6 +302,19 @@ export class ChainPoller {
 
     this.applySelection(this.runtimeConfig, nextSelection);
     this.readinessState = "ready";
+  }
+
+  private mapLogDecodeError(error: unknown): Error {
+    if (error instanceof InvalidTransferValueError) {
+      return new RpcEndpointError(
+        "eth_getLogs returned invalid hex",
+        "invalid_hex",
+        "eth_getLogs",
+        { value: error.value ?? null },
+      );
+    }
+
+    return error instanceof Error ? error : new Error(String(error));
   }
 
   async run(): Promise<void> {
@@ -448,16 +486,25 @@ export class ChainPoller {
   private async collectBatch(fromBlock: bigint, toBlock: bigint): Promise<ExecutionBatch> {
     const transferLogs = await this.fetchTransferLogs(fromBlock, toBlock);
     const transfersByToken = groupTransfersByToken(transferLogs);
-    const holderDeltas = buildHolderDeltas(transfersByToken);
+
+    let holderDeltas: HolderDelta[];
+    try {
+      holderDeltas = buildHolderDeltas(transfersByToken);
+    } catch (error) {
+      throw this.mapLogDecodeError(error);
+    }
 
     const blocks: BlockRow[] = [];
     const transactions: TransactionRow[] = [];
     const receipts: ReceiptRow[] = [];
     const logs: LogRow[] = [];
-    const tokenTransfers: TokenTransferRow[] = buildTokenTransferRows(
-      this.config.chainId,
-      transferLogs,
-    );
+    let tokenTransfers: TokenTransferRow[];
+
+    try {
+      tokenTransfers = buildTokenTransferRows(this.config.chainId, transferLogs);
+    } catch (error) {
+      throw this.mapLogDecodeError(error);
+    }
 
     for (let blockNumber = fromBlock; blockNumber <= toBlock; blockNumber++) {
       const block = await this.rpcClient.getBlockWithTransactions(blockNumber);
@@ -934,17 +981,30 @@ function logEndpointFailure(details: {
   error: RpcEndpointErrorKind;
   details: RpcEndpointErrorDetails;
 }) {
-  console.error(
-    JSON.stringify({
-      event: "chain.poller.rpc_error",
-      chainId: details.chainId,
-      endpointHost: details.endpointHost,
-      method: details.method,
-      error: details.error,
-      value: details.details.value ?? undefined,
-      status: details.details.status ?? undefined,
-    }),
-  );
+  const payload: Record<string, unknown> = {
+    event: "chain.poller.rpc_error",
+    chainId: details.chainId,
+    endpointHost: details.endpointHost,
+    method: details.method,
+    error: details.error,
+  };
+
+  if (details.details.status !== undefined) {
+    payload.httpStatus = details.details.status;
+  }
+
+  if (details.details.value !== undefined && details.details.value !== null) {
+    payload.value = details.details.value;
+  }
+
+  const serialized = JSON.stringify(payload);
+
+  if (details.error === "invalid_hex") {
+    console.warn(serialized);
+    return;
+  }
+
+  console.error(serialized);
 }
 
 function buildPollerConfig(chainId: number): ChainPollerConfig {
