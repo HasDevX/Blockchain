@@ -65,6 +65,16 @@ Run from the repository root unless stated otherwise:
 	- [`ops/systemd/explorertoken-chain@.service`](ops/systemd/explorertoken-chain@.service)
   - [`ops/scripts/deploy.sh`](ops/scripts/deploy.sh)
 
+When deploying on a Linux host, refresh dependencies and rebuild before bouncing the `systemd` units:
+
+```bash
+cd /srv/explorertoken/backend
+npm ci
+npm run build
+sudo systemctl restart explorertoken-backend
+sudo systemctl restart "explorertoken-chain@*"
+```
+
 Pair the host with Cloudflare (WAF+TLS termination) and managed Postgres/Redis as outlined in the deployment guide.
 
 ### Per-chain poller services

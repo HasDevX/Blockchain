@@ -1,8 +1,25 @@
-import { createApp } from "./app";
 import { loadEnv } from "./config/env";
 
 async function bootstrap() {
   const env = loadEnv();
+  type AppFactory = (typeof import("./app"))["createApp"];
+  let createApp: AppFactory;
+
+  try {
+    ({ createApp } = await import("./app"));
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+
+    if (err.code === "MODULE_NOT_FOUND" && err.message?.includes("'express'")) {
+      console.error(
+        "Missing required runtime dependency 'express'. Run `npm ci` on the server before starting the service."
+      );
+      process.exit(1);
+    }
+
+    throw error;
+  }
+
   const app = await createApp();
 
   app.listen(env.port, () => {
@@ -16,5 +33,3 @@ if (process.env.NODE_ENV !== "test") {
     process.exit(1);
   });
 }
-
-export { createApp };
