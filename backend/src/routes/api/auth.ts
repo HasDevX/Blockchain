@@ -1,7 +1,7 @@
 import { Request, Response, Router } from "express";
 import { RateLimitRequestHandler } from "express-rate-limit";
 import jwt from "jsonwebtoken";
-import { loadEnv } from "../../config/env";
+import { loadWebEnv } from "../../config/env";
 import {
   checkDbPassword,
   dbFindUserByEmail,
@@ -36,7 +36,7 @@ export function createAuthRouter(loginLimiter: RateLimitRequestHandler) {
       return;
     }
 
-    const env = loadEnv();
+  const env = loadWebEnv();
     const pool = env.databaseUrl ? getDefaultPool() : null;
     const normalizedIdentifier = identifier.toLowerCase();
 

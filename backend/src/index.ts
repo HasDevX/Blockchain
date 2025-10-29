@@ -1,7 +1,7 @@
-import { loadEnv } from "./config/env";
+import { loadWebEnv } from "./config/env";
 
 async function bootstrap() {
-  const env = loadEnv();
+  const env = loadWebEnv();
   type AppFactory = (typeof import("./app"))["createApp"];
   let createApp: AppFactory;
 

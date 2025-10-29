@@ -1,8 +1,8 @@
-import { loadEnv } from "./env";
+import { loadWorkerEnv } from "./env";
 import { SUPPORTED_CHAIN_IDS } from "./chains";
 
 export function getRpcUrl(chainId: number): string {
-  const env = loadEnv();
+  const env = loadWorkerEnv();
   const url = env.rpcUrls[chainId];
 
   if (!url) {

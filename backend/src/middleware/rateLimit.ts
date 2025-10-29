@@ -2,7 +2,7 @@ import { Request, Response } from "express";
 import rateLimitFactory, { RateLimitRequestHandler } from "express-rate-limit";
 import RedisStore from "rate-limit-redis";
 import { createClient } from "redis";
-import { AppEnv } from "../config/env";
+import { WebEnv } from "../config/env";
 
 interface RateLimiterBundle {
   loginLimiter: RateLimitRequestHandler;
@@ -75,7 +75,7 @@ async function createRedisStore(prefix: string, redisUrl?: string) {
   });
 }
 
-export async function createRateLimiters(env: AppEnv): Promise<RateLimiterBundle> {
+export async function createRateLimiters(env: WebEnv): Promise<RateLimiterBundle> {
   const loginStore = await createRedisStore("rl:login", env.redisUrl);
   const adminStore = await createRedisStore("rl:admin", env.redisUrl);
 

@@ -1,10 +1,10 @@
 import { Pool, PoolClient } from "pg";
-import { loadEnv } from "../config/env";
+import { loadWorkerEnv } from "../config/env";
 
 let pool: Pool | null = null;
 
 function createPool(): Pool {
-  const env = loadEnv();
+  const env = loadWorkerEnv();
 
   if (!env.databaseUrl) {
     throw new Error("DATABASE_URL is not configured");

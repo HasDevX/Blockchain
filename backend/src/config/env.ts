@@ -1,57 +1,77 @@
-import dotenv from "dotenv";
 import { SUPPORTED_CHAIN_IDS } from "./chains";
 
-dotenv.config();
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
+  const dotenv = require("dotenv") as typeof import("dotenv");
+  if (typeof dotenv?.config === "function") {
+    dotenv.config();
+  }
+} catch (error) {
+  // dotenv is optional in production environments.
+}
 
 type NullableString = string | null | undefined;
 
 const DEFAULT_FRONTEND = "https://haswork.dev";
-const DEFAULT_ADMIN_EMAIL = "admin@haswork.dev";
 
-function parseOrigins(raw: NullableString): string[] {
-  if (!raw) {
-    return [DEFAULT_FRONTEND];
-  }
-
-  return raw
-    .split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean);
-}
-
-export interface AppEnv {
+interface CommonEnv {
   nodeEnv: string;
-  port: number;
   databaseUrl?: string;
   redisUrl?: string;
-  frontendOrigins: string[];
   etherscanApiKey?: string;
   rpcUrls: Record<number, string>;
+}
+
+export interface WebEnv extends CommonEnv {
+  port: number;
+  frontendOrigins: string[];
   adminEmail: string;
   adminPassword?: string;
   adminPasswordHash?: string;
   jwtSecret: string;
 }
 
-let cachedEnv: AppEnv | null = null;
+export interface WorkerEnv extends CommonEnv {}
 
-export function loadEnv(): AppEnv {
-  if (cachedEnv) {
-    return cachedEnv;
+let cachedCommon: CommonEnv | null = null;
+let cachedWeb: WebEnv | null = null;
+let cachedWorker: WorkerEnv | null = null;
+
+function loadCommonEnv(): CommonEnv {
+  if (cachedCommon) {
+    return cachedCommon;
   }
 
-  const {
-    NODE_ENV,
-    PORT,
-    DATABASE_URL,
-    REDIS_URL,
-    FRONTEND_URL,
-    ETHERSCAN_API_KEY,
-  } = process.env;
+  const { NODE_ENV, DATABASE_URL, REDIS_URL, ETHERSCAN_API_KEY } = process.env;
 
-  const adminEmail =
-    pickFirstDefined("ADMIN_EMAIL", "AUTH_ADMIN_EMAIL", "DASHBOARD_ADMIN_EMAIL")?.toLowerCase() ??
-    DEFAULT_ADMIN_EMAIL;
+  cachedCommon = {
+    nodeEnv: NODE_ENV ?? "development",
+    databaseUrl: normalizeOptional(DATABASE_URL),
+    redisUrl: normalizeOptional(REDIS_URL),
+    etherscanApiKey: normalizeOptional(ETHERSCAN_API_KEY),
+    rpcUrls: buildRpcUrlMap(),
+  };
+
+  return cachedCommon;
+}
+
+export function loadWebEnv(): WebEnv {
+  if (cachedWeb) {
+    return cachedWeb;
+  }
+
+  const common = loadCommonEnv();
+  const adminEmailRaw = pickFirstDefined(
+    "ADMIN_EMAIL",
+    "AUTH_ADMIN_EMAIL",
+    "DASHBOARD_ADMIN_EMAIL",
+  );
+
+  if (!adminEmailRaw) {
+    throw new Error("ADMIN_EMAIL is required for the web server");
+  }
+
+  const adminEmail = adminEmailRaw.toLowerCase();
   const adminPassword = normalizeOptional(
     pickFirstDefined("ADMIN_PASSWORD", "AUTH_ADMIN_PASSWORD", "DASHBOARD_ADMIN_PASSWORD"),
   );
@@ -63,25 +83,46 @@ export function loadEnv(): AppEnv {
     ),
   );
 
+  if (!adminPassword && !adminPasswordHash) {
+    throw new Error("ADMIN_PASSWORD or ADMIN_PASSWORD_BCRYPT_HASH is required for the web server");
+  }
+
   const jwtSecret =
     normalizeOptional(pickFirstDefined("JWT_SECRET", "AUTH_JWT_SECRET", "DASHBOARD_JWT_SECRET")) ??
     "dev-secret";
 
-  cachedEnv = {
-    nodeEnv: NODE_ENV ?? "development",
-    port: PORT ? Number(PORT) : 4000,
-    databaseUrl: DATABASE_URL,
-    redisUrl: REDIS_URL,
-    frontendOrigins: parseOrigins(FRONTEND_URL),
-    etherscanApiKey: ETHERSCAN_API_KEY,
-    rpcUrls: buildRpcUrlMap(),
+  cachedWeb = {
+    ...common,
+    port: parsePort(process.env.PORT),
+    frontendOrigins: parseOrigins(process.env.FRONTEND_URL),
     adminEmail,
     adminPassword,
     adminPasswordHash,
     jwtSecret,
   };
 
-  return cachedEnv;
+  return cachedWeb;
+}
+
+export function loadWorkerEnv(): WorkerEnv {
+  if (cachedWorker) {
+    return cachedWorker;
+  }
+
+  const common = loadCommonEnv();
+  cachedWorker = { ...common };
+  return cachedWorker;
+}
+
+function parseOrigins(raw: NullableString): string[] {
+  if (!raw) {
+    return [DEFAULT_FRONTEND];
+  }
+
+  return raw
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 }
 
 const DEFAULT_RPC_URLS: Record<number, string> = {
@@ -106,6 +147,15 @@ function buildRpcUrlMap(): Record<number, string> {
   }
 
   return map;
+}
+
+function parsePort(raw?: string | null): number {
+  if (!raw) {
+    return 4000;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 4000;
 }
 
 function normalizeOptional(value: NullableString): string | undefined {

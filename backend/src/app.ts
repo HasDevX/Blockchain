@@ -1,6 +1,6 @@
 import express from "express";
 import helmet from "helmet";
-import { loadEnv } from "./config/env";
+import { loadWebEnv } from "./config/env";
 import { createStrictCors } from "./middleware/strictCors";
 import { createRateLimiters } from "./middleware/rateLimit";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
@@ -17,7 +17,7 @@ const CSP_DIRECTIVES = {
 };
 
 export async function createApp() {
-  const env = loadEnv();
+  const env = loadWebEnv();
   const app = express();
 
   getGitSha();

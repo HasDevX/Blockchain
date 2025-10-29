@@ -1,8 +1,8 @@
 import cors, { CorsOptions } from "cors";
 import { RequestHandler } from "express";
-import { AppEnv } from "../config/env";
+import { WebEnv } from "../config/env";
 
-export function createStrictCors(env: AppEnv): RequestHandler {
+export function createStrictCors(env: WebEnv): RequestHandler {
   const allowedOrigins = new Set(env.frontendOrigins);
 
   const options: CorsOptions = {

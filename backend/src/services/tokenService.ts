@@ -1,14 +1,14 @@
 import type { Pool } from "pg";
 import { CHAINS, getChainById } from "../config/chains";
 import { getChainAdapter } from "../config/chainAdapters";
-import { loadEnv } from "../config/env";
+import { loadWebEnv } from "../config/env";
 import { getPool } from "../lib/db";
 import { getRedisClient } from "../lib/redisClient";
 import { EtherscanClient } from "../vendors/etherscanClient";
 import { addressToBuffer, bufferToAddress, normalizeAddress } from "./holderStore";
 import { getTokenCursor } from "./tokenHolderRepository";
 
-const env = loadEnv();
+const env = loadWebEnv();
 const etherscanClient = new EtherscanClient(env.etherscanApiKey);
 
 export interface TokenSummary {

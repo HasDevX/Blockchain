@@ -1,5 +1,5 @@
 import { createClient } from "redis";
-import { AppEnv } from "../config/env";
+import { WebEnv } from "../config/env";
 
 type RedisClient = ReturnType<typeof createClient>;
 
@@ -26,7 +26,7 @@ async function connect(redisUrl: string): Promise<RedisClient | null> {
   }
 }
 
-export async function getRedisClient(env: AppEnv): Promise<RedisClient | null> {
+export async function getRedisClient(env: WebEnv): Promise<RedisClient | null> {
   if (!env.redisUrl) {
     if (!missingUrlWarned) {
       console.warn("[redis] REDIS_URL not set; using in-memory rate limiter");

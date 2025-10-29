@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import type { AppEnv } from "../config/env";
+import type { WebEnv } from "../config/env";
 
 interface MockRedisClient {
   connect: ReturnType<typeof vi.fn>;
@@ -85,7 +85,7 @@ vi.mock("express-rate-limit", () => ({
 }));
 
 describe("createRateLimiters", () => {
-  const baseEnv: AppEnv = {
+  const baseEnv: WebEnv = {
     nodeEnv: "test",
     port: 4000,
     databaseUrl: undefined,
@@ -118,7 +118,7 @@ describe("createRateLimiters", () => {
   });
 
   it("uses Redis store when REDIS_URL is provided", async () => {
-    const env: AppEnv = { ...baseEnv, redisUrl: "redis://localhost:6379" };
+  const env: WebEnv = { ...baseEnv, redisUrl: "redis://localhost:6379" };
     const { createRateLimiters } = await import("../middleware/rateLimit");
 
     const limiters = await createRateLimiters(env);
@@ -143,7 +143,7 @@ describe("createRateLimiters", () => {
   });
 
   it("falls back to in-memory store when REDIS_URL is missing", async () => {
-    const env: AppEnv = { ...baseEnv, redisUrl: undefined };
+  const env: WebEnv = { ...baseEnv, redisUrl: undefined };
     const { createRateLimiters } = await import("../middleware/rateLimit");
 
     await expect(createRateLimiters(env)).resolves.toMatchObject({
@@ -158,7 +158,7 @@ describe("createRateLimiters", () => {
 
   it("falls back when Redis connection fails", async () => {
     connectShouldSucceed = false;
-    const env: AppEnv = { ...baseEnv, redisUrl: "redis://localhost:6379" };
+  const env: WebEnv = { ...baseEnv, redisUrl: "redis://localhost:6379" };
     const { createRateLimiters } = await import("../middleware/rateLimit");
 
     await expect(createRateLimiters(env)).resolves.toMatchObject({

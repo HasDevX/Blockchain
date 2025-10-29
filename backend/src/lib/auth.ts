@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import bcrypt from "bcryptjs";
 import type { Pool } from "pg";
-import { loadEnv } from "../config/env";
+import { loadWebEnv } from "../config/env";
 import { getPool } from "./db";
 
 export interface DbUserRecord {
@@ -66,7 +66,7 @@ export function safeEq(a?: string | null, b?: string | null): boolean {
 }
 
 export function getEnvAdmin(): EnvAdminCredentials | null {
-  const env = loadEnv();
+  const env = loadWebEnv();
   const password = env.adminPassword?.trim();
   const passwordHash = env.adminPasswordHash?.trim();
 

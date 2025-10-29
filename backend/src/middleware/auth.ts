@@ -1,6 +1,6 @@
 import { NextFunction, Request, RequestHandler, Response } from "express";
 import jwt, { JwtPayload } from "jsonwebtoken";
-import { loadEnv } from "../config/env";
+import { loadWebEnv } from "../config/env";
 
 const UNAUTHORIZED_STATUS = 401;
 const TOKEN_PREFIX = "bearer ";
@@ -58,7 +58,7 @@ function resolveAdminUser(headerValue?: string): Express.User | null {
     return null;
   }
 
-  const env = loadEnv();
+  const env = loadWebEnv();
 
   try {
     const payload = jwt.verify(rawToken, env.jwtSecret) as JwtPayload & { email?: string };

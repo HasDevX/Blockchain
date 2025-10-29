@@ -1,6 +1,6 @@
 import { Pool, PoolClient } from "pg";
 import { getPool } from "../lib/db";
-import { loadEnv } from "../config/env";
+import { loadWorkerEnv } from "../config/env";
 import { getChainById, SUPPORTED_CHAIN_IDS } from "../config/chains";
 import { parsePositiveBigInt, resolveMaxSpan } from "../workers/adaptiveSpan";
 
@@ -100,7 +100,7 @@ function resolveDefaultName(chainId: number): string {
 function resolveDefaultRpcUrl(
   chainId: number,
 ): { value: string | null; source: "env" | "none" } {
-  const env = loadEnv();
+  const env = loadWorkerEnv();
   const fallback = env.rpcUrls[chainId];
 
   if (fallback && fallback.trim().length > 0) {
@@ -111,7 +111,7 @@ function resolveDefaultRpcUrl(
 }
 
 function resolveDefaultEtherscanKey(): { value: string | null; source: "env" | "none" } {
-  const env = loadEnv();
+  const env = loadWorkerEnv();
 
   if (env.etherscanApiKey && env.etherscanApiKey.trim().length > 0) {
     return { value: env.etherscanApiKey.trim(), source: "env" };
