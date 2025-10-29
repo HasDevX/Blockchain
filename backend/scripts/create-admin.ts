@@ -1,7 +1,7 @@
 import { stdin as input, stdout as output } from "node:process";
 import { createInterface } from "node:readline/promises";
 import bcrypt from "bcryptjs";
-import { loadEnv } from "../src/config/env";
+import { loadWebEnv } from "../src/config/env";
 import { getPool, shutdownPool } from "../src/lib/db";
 
 interface PromptOptions {
@@ -168,7 +168,9 @@ async function upsertIntoLegacyAdminUsers(email: string, passwordHash: string) {
 }
 
 async function main() {
-  const env = loadEnv();
+  const env = loadWebEnv();
+
+  console.info("[create-admin] Loaded web env");
 
   if (!env.databaseUrl) {
     throw new Error("DATABASE_URL is not configured");

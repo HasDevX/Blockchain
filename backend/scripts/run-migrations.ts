@@ -1,7 +1,7 @@
 import { readFile, readdir } from "fs/promises";
 import path from "path";
 import { Pool, PoolClient } from "pg";
-import { loadEnv } from "../src/config/env";
+import { loadWorkerEnv } from "../src/config/env";
 
 async function ensureMigrationsTable(client: PoolClient) {
   await client.query(`
@@ -39,7 +39,9 @@ async function runMigration(client: PoolClient, filePath: string, filename: stri
 }
 
 async function main() {
-  const env = loadEnv();
+  const env = loadWorkerEnv();
+
+  console.info("[run-migrations] Loaded worker env");
 
   if (!env.databaseUrl) {
     throw new Error("DATABASE_URL is not configured");

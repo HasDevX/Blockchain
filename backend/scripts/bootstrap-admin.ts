@@ -1,5 +1,5 @@
 import bcrypt from "bcryptjs";
-import { loadEnv } from "../src/config/env";
+import { loadWebEnv } from "../src/config/env";
 import { getEnvAdmin } from "../src/lib/auth";
 import type { EnvAdminCredentials } from "../src/lib/auth";
 import { getPool, shutdownPool } from "../src/lib/db";
@@ -64,7 +64,9 @@ async function upsertAdminUser(email: string, passwordHash: string) {
 }
 
 async function main() {
-  const env = loadEnv();
+  const env = loadWebEnv();
+
+  console.info("[bootstrap-admin] Loaded web env");
 
   if (!env.databaseUrl) {
     throw new Error("DATABASE_URL is not configured");
