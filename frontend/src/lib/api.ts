@@ -182,6 +182,7 @@ export async function fetchAdminSettings(token?: string | null): Promise<AdminSe
 type RawAdminConnectionEndpoint = {
   id: string;
   chain_id: number;
+  label: string | null;
   url: string;
   is_primary: boolean;
   enabled: boolean;
@@ -211,6 +212,7 @@ type RawAdminRpcTestResult =
 
 export interface AdminEndpointCreatePayload {
   url: string;
+  label?: string | null;
   isPrimary?: boolean;
   enabled?: boolean;
   qps?: number;
@@ -307,9 +309,7 @@ export async function testAdminRpc(
   return normalizeAdminRpcTestResult(response);
 }
 
-function normalizeAdminConnections(
-  payload: RawAdminConnectionsResponse,
-): AdminConnectionsResponse {
+function normalizeAdminConnections(payload: RawAdminConnectionsResponse): AdminConnectionsResponse {
   return {
     chains: payload.chains.map((chain) => normalizeAdminChain(chain)),
   };
@@ -323,12 +323,11 @@ function normalizeAdminChain(chain: RawAdminConnectionChain): AdminConnectionCha
   };
 }
 
-function normalizeAdminEndpoint(
-  endpoint: RawAdminConnectionEndpoint,
-): AdminConnectionEndpoint {
+function normalizeAdminEndpoint(endpoint: RawAdminConnectionEndpoint): AdminConnectionEndpoint {
   return {
     id: endpoint.id,
     chainId: endpoint.chain_id,
+    label: endpoint.label ?? null,
     url: endpoint.url,
     isPrimary: endpoint.is_primary,
     enabled: endpoint.enabled,
@@ -371,6 +370,10 @@ function buildEndpointRequestBody(
 
   if (payload.isPrimary !== undefined) {
     body.is_primary = payload.isPrimary;
+  }
+
+  if (payload.label !== undefined) {
+    body.label = payload.label;
   }
 
   if (payload.enabled !== undefined) {

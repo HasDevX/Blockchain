@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS public.chain_endpoints (
   id BIGSERIAL PRIMARY KEY,
   chain_id INT NOT NULL REFERENCES public.chain_configs (chain_id),
   url TEXT NOT NULL,
+  label TEXT,
   is_primary BOOLEAN NOT NULL DEFAULT FALSE,
   enabled BOOLEAN NOT NULL DEFAULT TRUE,
   qps INT NOT NULL DEFAULT 1,
@@ -41,6 +42,7 @@ BEGIN
       INSERT INTO public.chain_endpoints (
         chain_id,
         url,
+        label,
         is_primary,
         enabled,
         qps,
@@ -55,6 +57,7 @@ BEGIN
       SELECT
         chain_id,
         url,
+        NULL,
         FALSE,
         enabled,
         qps,

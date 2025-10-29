@@ -17,14 +17,50 @@ import {
   updateAdminEndpoint,
 } from "../lib/api";
 import { getChainMetadataById } from "../lib/chainMetadata";
-import type { AdminConnectionChain, AdminConnectionEndpoint } from "../types/api";
+import type {
+  AdminConnectionChain,
+  AdminConnectionEndpoint,
+  AdminRpcTestResult,
+} from "../types/api";
 
 type ModalState =
   | { type: "closed" }
   | { type: "create"; chain: AdminConnectionChain }
   | { type: "edit"; chain: AdminConnectionChain; endpoint: AdminConnectionEndpoint };
 
+type RpcTestOutcome =
+  | { kind: "idle" }
+  | { kind: "pending" }
+  | { kind: "success"; tip: string; latencyMs: number }
+  | { kind: "unauthorized" }
+  | { kind: "error"; message: string };
+
+type QuickTipItem = {
+  title: string;
+  description: string;
+  href?: string;
+  hrefLabel?: string;
+};
+
+type QuickTipFallback = {
+  label: string;
+  url: string;
+  qps?: string;
+  minSpan?: string;
+  maxSpan?: string;
+  weight?: string;
+  orderIndex?: string;
+};
+
+type QuickTipsContent = {
+  heading: string;
+  description: string;
+  tips: QuickTipItem[];
+  fallback?: QuickTipFallback;
+};
+
 type EndpointFormState = {
+  label: string;
   url: string;
   isPrimary: boolean;
   enabled: boolean;
@@ -38,6 +74,7 @@ type EndpointFormState = {
 type FormErrors = Partial<Record<keyof EndpointFormState, string>> & { form?: string };
 
 const DEFAULT_FORM: EndpointFormState = {
+  label: "",
   url: "",
   isPrimary: false,
   enabled: true,
@@ -58,6 +95,10 @@ export function AdminConnectionsPage() {
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [testingEndpointId, setTestingEndpointId] = useState<string | null>(null);
+  const [endpointStatuses, setEndpointStatuses] = useState<Record<string, RpcTestOutcome>>({});
+  const [modalTestState, setModalTestState] = useState<RpcTestOutcome>({ kind: "idle" });
+  const [primaryUpdatingId, setPrimaryUpdatingId] = useState<string | null>(null);
+  const [showQuickTips, setShowQuickTips] = useState(false);
 
   useEffect(() => {
     if (error instanceof ApiError && error.status === 401) {
@@ -70,9 +111,11 @@ export function AdminConnectionsPage() {
     if (modalState.type === "closed") {
       setFormState(DEFAULT_FORM);
       setFormErrors({});
+      setModalTestState({ kind: "idle" });
     } else if (modalState.type === "edit") {
       const { endpoint } = modalState;
       setFormState({
+        label: endpoint.label ?? "",
         url: endpoint.url,
         isPrimary: endpoint.isPrimary,
         enabled: endpoint.enabled,
@@ -83,13 +126,25 @@ export function AdminConnectionsPage() {
         orderIndex: String(endpoint.orderIndex ?? ""),
       });
       setFormErrors({});
+      setModalTestState({ kind: "idle" });
+      setShowQuickTips(false);
     } else if (modalState.type === "create") {
       setFormState(DEFAULT_FORM);
       setFormErrors({});
+      setModalTestState({ kind: "idle" });
+      setShowQuickTips(false);
     }
   }, [modalState]);
 
   const chains = useMemo(() => data?.chains ?? [], [data]);
+
+  const quickTips = useMemo(() => {
+    if (modalState.type === "closed") {
+      return null;
+    }
+
+    return getQuickTipContent(modalState.chain.chainId);
+  }, [modalState]);
 
   if (isLoading) {
     return <Skeleton className="h-80" />;
@@ -140,7 +195,12 @@ export function AdminConnectionsPage() {
               onToggleEndpoint={async (endpoint) => {
                 await handleToggleEndpoint(chain, endpoint);
               }}
+              onSetPrimary={async (endpoint) => {
+                await handleSetPrimary(chain, endpoint);
+              }}
               isTesting={(endpointId) => testingEndpointId === endpointId}
+              isPrimaryUpdating={(endpointId) => primaryUpdatingId === endpointId}
+              statusForEndpoint={(endpointId) => endpointStatuses[endpointId]}
             />
           ))}
         </div>
@@ -163,11 +223,39 @@ export function AdminConnectionsPage() {
             await handleSubmitUpdate(modalState.chain, modalState.endpoint);
           }
         }}
+        onTestRpc={async () => {
+          if (modalState.type === "create") {
+            await handleModalTest(modalState.chain);
+          } else if (modalState.type === "edit") {
+            await handleModalTest(modalState.chain);
+          }
+        }}
+        testState={modalTestState}
+        showTips={showQuickTips}
+        onToggleTips={() => setShowQuickTips((value) => !value)}
+        quickTips={quickTips}
+        onApplyFallback={(fallback) => {
+          setFormState((previous) => ({
+            ...previous,
+            label: fallback.label,
+            url: fallback.url,
+            qps: fallback.qps ?? previous.qps,
+            minSpan: fallback.minSpan ?? previous.minSpan,
+            maxSpan: fallback.maxSpan ?? previous.maxSpan,
+            weight: fallback.weight ?? previous.weight,
+            orderIndex: fallback.orderIndex ?? previous.orderIndex,
+          }));
+          setFormErrors((previous) => ({ ...previous, form: undefined }));
+          setModalTestState({ kind: "idle" });
+        }}
       />
     </section>
   );
 
-  async function handleTestEndpoint(chain: AdminConnectionChain, endpoint: AdminConnectionEndpoint) {
+  async function handleTestEndpoint(
+    chain: AdminConnectionChain,
+    endpoint: AdminConnectionEndpoint,
+  ) {
     if (!token) {
       toast.error("Missing admin token");
       return;
@@ -179,26 +267,84 @@ export function AdminConnectionsPage() {
     };
 
     setTestingEndpointId(endpoint.id);
+    setEndpointStatuses((previous) => ({ ...previous, [endpoint.id]: { kind: "pending" } }));
 
     try {
       const result = await testAdminRpc(payload, token);
+      const outcome = mapRpcResultToOutcome(result);
+      setEndpointStatuses((previous) => ({ ...previous, [endpoint.id]: outcome }));
 
       if (result.ok) {
         toast.success(`RPC healthy • tip ${result.tip} • ${result.latencyMs} ms`);
-      } else {
-        toast.error(result.message ? `${result.error}: ${result.message}` : result.error);
+      } else if (outcome.kind === "unauthorized") {
+        toast.error("Unauthorized (check API key)");
+      } else if (outcome.kind === "error") {
+        toast.error(outcome.message);
       }
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
+        setEndpointStatuses((previous) => ({
+          ...previous,
+          [endpoint.id]: { kind: "unauthorized" },
+        }));
         clearToken();
         navigate("/login", { replace: true, state: { from: location.pathname } });
         return;
       }
 
-      toast.error("Unable to test endpoint");
+      const outcome = mapRpcErrorToOutcome(err);
+      setEndpointStatuses((previous) => ({ ...previous, [endpoint.id]: outcome }));
+      toast.error(outcome.kind === "error" ? outcome.message : "Unable to test endpoint");
       console.error(err);
     } finally {
       setTestingEndpointId(null);
+    }
+  }
+
+  async function handleModalTest(chain: AdminConnectionChain) {
+    const trimmedUrl = formState.url.trim();
+
+    if (!trimmedUrl) {
+      setFormErrors((previous) => ({ ...previous, url: "URL is required" }));
+      return;
+    }
+
+    if (!token) {
+      toast.error("Missing admin token");
+      return;
+    }
+
+    const payload: AdminRpcTestPayload = {
+      url: trimmedUrl,
+      chainId: chain.chainId,
+    };
+
+    setModalTestState({ kind: "pending" });
+
+    try {
+      const result = await testAdminRpc(payload, token);
+      const outcome = mapRpcResultToOutcome(result);
+      setModalTestState(outcome);
+
+      if (result.ok) {
+        toast.success(`RPC healthy • tip ${result.tip} • ${result.latencyMs} ms`);
+      } else if (outcome.kind === "unauthorized") {
+        toast.error("Unauthorized (check API key)");
+      } else if (outcome.kind === "error") {
+        toast.error(outcome.message);
+      }
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        clearToken();
+        navigate("/login", { replace: true, state: { from: location.pathname } });
+        setModalTestState({ kind: "unauthorized" });
+        return;
+      }
+
+      const outcome = mapRpcErrorToOutcome(err);
+      setModalTestState(outcome);
+      toast.error(outcome.kind === "error" ? outcome.message : "Unable to test endpoint");
+      console.error(err);
     }
   }
 
@@ -254,9 +400,46 @@ export function AdminConnectionsPage() {
     }
   }
 
+  async function handleSetPrimary(chain: AdminConnectionChain, endpoint: AdminConnectionEndpoint) {
+    if (endpoint.isPrimary) {
+      return;
+    }
+
+    if (!token) {
+      toast.error("Missing admin token");
+      return;
+    }
+
+    setPrimaryUpdatingId(endpoint.id);
+
+    try {
+      await updateAdminEndpoint(chain.chainId, endpoint.id, { isPrimary: true }, token);
+      toast.success(`${endpoint.label ?? "Endpoint"} set as primary`);
+      await mutate();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        clearToken();
+        navigate("/login", { replace: true, state: { from: location.pathname } });
+        return;
+      }
+
+      toast.error("Failed to set primary endpoint");
+      console.error(err);
+    } finally {
+      setPrimaryUpdatingId(null);
+    }
+  }
+
   function validateForm(): FormErrors {
     const errors: FormErrors = {};
+    const label = formState.label.trim();
     const trimmedUrl = formState.url.trim();
+
+    if (label.length === 0) {
+      errors.label = "Label is required";
+    } else if (label.length > 80) {
+      errors.label = "Label must be 80 characters or fewer";
+    }
 
     if (!trimmedUrl) {
       errors.url = "URL is required";
@@ -386,18 +569,25 @@ function ChainConnectionsCard({
   onEditEndpoint,
   onTestEndpoint,
   onToggleEndpoint,
+  onSetPrimary,
   isTesting,
+  isPrimaryUpdating,
+  statusForEndpoint,
 }: {
   chain: AdminConnectionChain;
   onAddEndpoint: () => void;
   onEditEndpoint: (endpoint: AdminConnectionEndpoint) => void;
   onTestEndpoint: (endpoint: AdminConnectionEndpoint) => Promise<void>;
   onToggleEndpoint: (endpoint: AdminConnectionEndpoint) => Promise<void>;
+  onSetPrimary: (endpoint: AdminConnectionEndpoint) => Promise<void>;
   isTesting: (endpointId: string) => boolean;
+  isPrimaryUpdating: (endpointId: string) => boolean;
+  statusForEndpoint: (endpointId: string) => RpcTestOutcome | undefined;
 }) {
   const metadata = getChainMetadataById(chain.chainId);
   const title = metadata?.name ?? chain.name;
-  const subtitle = metadata?.shortName && metadata.shortName !== metadata.name ? metadata.shortName : null;
+  const subtitle =
+    metadata?.shortName && metadata.shortName !== metadata.name ? metadata.shortName : null;
 
   return (
     <div className="space-y-4 rounded-2xl border border-slate-800/70 bg-surface-light/40 p-6 shadow-subtle">
@@ -423,12 +613,12 @@ function ChainConnectionsCard({
         getRowKey={(row) => row.id}
         columns={[
           {
-            key: "url",
-            header: "Endpoint",
+            key: "label",
+            header: "Label",
             render: (endpoint) => (
               <div className="space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="break-all font-medium text-slate-100">{endpoint.url}</span>
+                  <span className="font-medium text-slate-100">{endpoint.label ?? "—"}</span>
                   {endpoint.isPrimary ? (
                     <span className="inline-flex items-center rounded-full bg-primary-500/20 px-2 py-0.5 text-xs font-semibold text-primary-100">
                       Primary
@@ -445,6 +635,45 @@ function ChainConnectionsCard({
                 </div>
               </div>
             ),
+            className: "w-56",
+          },
+          {
+            key: "url",
+            header: "RPC URL",
+            render: (endpoint) => (
+              <span
+                className="block max-w-[18rem] truncate text-sm text-slate-200"
+                title={endpoint.url}
+              >
+                {endpoint.url}
+              </span>
+            ),
+            className: "w-60",
+          },
+          {
+            key: "primary",
+            header: "Primary",
+            render: (endpoint) => {
+              const updating = isPrimaryUpdating(endpoint.id);
+              return (
+                <label className="flex items-center gap-2 text-sm text-slate-200">
+                  <input
+                    type="radio"
+                    name={`primary-${chain.chainId}`}
+                    checked={endpoint.isPrimary}
+                    disabled={endpoint.isPrimary || updating}
+                    onChange={() => {
+                      void onSetPrimary(endpoint);
+                    }}
+                    className="h-4 w-4 accent-primary-400"
+                  />
+                  <span>
+                    {endpoint.isPrimary ? "Primary" : updating ? "Saving…" : "Set primary"}
+                  </span>
+                </label>
+              );
+            },
+            className: "w-44",
           },
           {
             key: "limits",
@@ -452,10 +681,12 @@ function ChainConnectionsCard({
             render: (endpoint) => (
               <div className="text-sm text-slate-200">
                 <div>QPS {endpoint.qps}</div>
-                <div className="text-xs text-slate-500">Span {endpoint.minSpan} → {endpoint.maxSpan}</div>
+                <div className="text-xs text-slate-500">
+                  Span {endpoint.minSpan} → {endpoint.maxSpan}
+                </div>
               </div>
             ),
-            className: "w-32",
+            className: "w-40",
           },
           {
             key: "weight",
@@ -466,7 +697,7 @@ function ChainConnectionsCard({
                 <div className="text-xs text-slate-500">Order {endpoint.orderIndex}</div>
               </div>
             ),
-            className: "w-32",
+            className: "w-36",
           },
           {
             key: "health",
@@ -475,11 +706,21 @@ function ChainConnectionsCard({
               <div className="text-sm text-slate-200">
                 <div>{endpoint.lastHealth ?? "Unknown"}</div>
                 <div className="text-xs text-slate-500">
-                  {endpoint.lastCheckedAt ? `Checked ${formatTimeAgo(endpoint.lastCheckedAt)}` : "Not checked"}
+                  {endpoint.lastCheckedAt ? (
+                    <>Checked {formatTimeAgo(endpoint.lastCheckedAt)}</>
+                  ) : (
+                    "Not checked"
+                  )}
                 </div>
               </div>
             ),
-            className: "w-40",
+            className: "w-48",
+          },
+          {
+            key: "status",
+            header: "Test status",
+            render: (endpoint) => renderOutcomeBadge(statusForEndpoint(endpoint.id)),
+            className: "w-56",
           },
           {
             key: "actions",
@@ -492,7 +733,7 @@ function ChainConnectionsCard({
                   className="rounded-full border border-slate-700/60 px-2 py-1 text-xs text-slate-200 transition hover:border-primary-400 hover:text-primary-200 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-400"
                   disabled={isTesting(endpoint.id)}
                 >
-                  {isTesting(endpoint.id) ? "Testing…" : "Test"}
+                  {isTesting(endpoint.id) ? "Testing…" : "Test RPC"}
                 </button>
                 <button
                   type="button"
@@ -515,7 +756,7 @@ function ChainConnectionsCard({
                 </button>
               </div>
             ),
-            className: "w-44",
+            className: "w-48",
           },
         ]}
         emptyState={<span className="text-sm text-slate-400">No endpoints configured.</span>}
@@ -532,14 +773,29 @@ function EndpointModal({
   onClose,
   onChange,
   onSubmit,
+  onTestRpc,
+  testState,
+  showTips,
+  onToggleTips,
+  quickTips,
+  onApplyFallback,
 }: {
   state: ModalState;
   formState: EndpointFormState;
   formErrors: FormErrors;
   isSubmitting: boolean;
   onClose: () => void;
-  onChange: (field: keyof EndpointFormState, value: EndpointFormState[keyof EndpointFormState]) => void;
+  onChange: (
+    field: keyof EndpointFormState,
+    value: EndpointFormState[keyof EndpointFormState],
+  ) => void;
   onSubmit: () => Promise<void>;
+  onTestRpc: () => Promise<void>;
+  testState: RpcTestOutcome;
+  showTips: boolean;
+  onToggleTips: () => void;
+  quickTips: QuickTipsContent | null;
+  onApplyFallback: (fallback: QuickTipFallback) => void;
 }) {
   const isOpen = state.type !== "closed";
   const isEdit = state.type === "edit";
@@ -548,26 +804,41 @@ function EndpointModal({
     return null;
   }
 
-  const title = isEdit ? "Edit endpoint" : `Add endpoint${state.type === "create" ? ` — ${state.chain.name}` : ""}`;
+  const title = isEdit ? "Edit endpoint" : `Add endpoint — ${state.chain.name}`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur">
-      <div className="w-full max-w-lg rounded-2xl border border-slate-800/80 bg-slate-900/90 p-6 shadow-xl">
-        <div className="flex items-start justify-between">
-          <div>
+      <div className="w-full max-w-3xl rounded-2xl border border-slate-800/80 bg-slate-900/90 p-6 shadow-xl">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="space-y-1">
             <h3 className="text-lg font-semibold text-slate-100">{title}</h3>
             <p className="text-sm text-slate-500">
-              Provide the RPC URL and optional limits. All numeric values must be integers.
+              Provide the RPC details, set limits, and optionally test connectivity before saving.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full border border-slate-700/60 px-3 py-1 text-xs text-slate-300 transition hover:border-slate-500 hover:text-slate-100"
-          >
-            Close
-          </button>
+          <div className="flex items-center gap-2">
+            {quickTips ? (
+              <button
+                type="button"
+                onClick={onToggleTips}
+                className="rounded-full border border-slate-700/60 px-3 py-1 text-xs text-slate-200 transition hover:border-primary-400 hover:text-primary-100 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-400"
+              >
+                {showTips ? "Hide Quick Tips" : "Show Quick Tips"}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-full border border-slate-700/60 px-3 py-1 text-xs text-slate-300 transition hover:border-slate-500 hover:text-slate-100"
+            >
+              Close
+            </button>
+          </div>
         </div>
+
+        {showTips && quickTips ? (
+          <QuickTipsPanel content={quickTips} onApplyFallback={onApplyFallback} />
+        ) : null}
 
         <form
           className="mt-6 space-y-4"
@@ -576,20 +847,55 @@ function EndpointModal({
             void onSubmit();
           }}
         >
-          <div>
-            <label className="block text-sm font-medium text-slate-200" htmlFor="endpoint-url">
-              Endpoint URL
-            </label>
-            <input
-              id="endpoint-url"
-              type="url"
-              className={inputClass(formErrors.url)}
-              value={formState.url}
-              onChange={(event) => onChange("url", event.target.value)}
-              placeholder="https://rpc.example.com"
-              required
-            />
-            {formErrors.url ? <p className="mt-1 text-xs text-rose-400">{formErrors.url}</p> : null}
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label className="block text-sm font-medium text-slate-200" htmlFor="endpoint-label">
+                Label
+              </label>
+              <input
+                id="endpoint-label"
+                type="text"
+                className={inputClass(formErrors.label)}
+                maxLength={80}
+                value={formState.label}
+                onChange={(event) => onChange("label", event.target.value)}
+                placeholder="Primary QuickNode"
+                required
+              />
+              {formErrors.label ? (
+                <p className="mt-1 text-xs text-rose-400">{formErrors.label}</p>
+              ) : null}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-200" htmlFor="endpoint-url">
+                Endpoint URL
+              </label>
+              <div className="mt-1 flex gap-2">
+                <input
+                  id="endpoint-url"
+                  type="url"
+                  className={inputClass(formErrors.url)}
+                  value={formState.url}
+                  onChange={(event) => onChange("url", event.target.value)}
+                  placeholder="https://example.quiknode.pro/..."
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    void onTestRpc();
+                  }}
+                  className="whitespace-nowrap rounded-xl border border-primary-400/70 px-3 py-2 text-xs font-medium text-primary-100 transition hover:border-primary-300 hover:text-white focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-400 disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={testState.kind === "pending" || isSubmitting}
+                >
+                  {testState.kind === "pending" ? "Testing…" : "Test RPC"}
+                </button>
+              </div>
+              {formErrors.url ? (
+                <p className="mt-1 text-xs text-rose-400">{formErrors.url}</p>
+              ) : null}
+              <div className="mt-2 text-xs text-slate-400">{renderOutcomeBadge(testState)}</div>
+            </div>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
@@ -679,6 +985,58 @@ function EndpointModal({
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+function QuickTipsPanel({
+  content,
+  onApplyFallback,
+}: {
+  content: QuickTipsContent;
+  onApplyFallback: (fallback: QuickTipFallback) => void;
+}) {
+  return (
+    <div className="mt-6 rounded-2xl border border-primary-400/30 bg-primary-500/5 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="max-w-2xl space-y-2">
+          <div>
+            <h4 className="text-sm font-semibold text-primary-100">{content.heading}</h4>
+            <p className="text-xs text-primary-200/80">{content.description}</p>
+          </div>
+
+          <ul className="space-y-2 text-xs text-primary-100/90">
+            {content.tips.map((tip, index) => (
+              <li
+                key={index}
+                className="rounded-xl border border-primary-400/40 bg-primary-500/10 px-3 py-2"
+              >
+                <p className="font-medium text-primary-100">{tip.title}</p>
+                <p className="text-primary-200/80">{tip.description}</p>
+                {tip.href ? (
+                  <a
+                    href={tip.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 inline-flex text-primary-200 underline decoration-dotted"
+                  >
+                    {tip.hrefLabel ?? "View reference"}
+                  </a>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+        {content.fallback ? (
+          <button
+            type="button"
+            onClick={() => onApplyFallback(content.fallback!)}
+            className="rounded-xl border border-primary-400/60 bg-primary-500/20 px-3 py-2 text-xs font-semibold text-primary-100 transition hover:border-primary-300 hover:text-white focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-400"
+          >
+            Apply recommended defaults
+          </button>
+        ) : null}
       </div>
     </div>
   );
@@ -799,6 +1157,7 @@ function parseInteger(value: string): number | null {
 
 function buildCreatePayload(form: EndpointFormState): AdminEndpointCreatePayload {
   return {
+    label: form.label.trim(),
     url: form.url.trim(),
     isPrimary: form.isPrimary,
     enabled: form.enabled,
@@ -815,8 +1174,12 @@ function buildUpdatePayload(
   endpoint: AdminConnectionEndpoint,
 ): AdminEndpointUpdatePayload {
   const payload: AdminEndpointUpdatePayload = {};
-  const url = form.url.trim();
+  const label = form.label.trim();
+  if (label !== (endpoint.label ?? "")) {
+    payload.label = label;
+  }
 
+  const url = form.url.trim();
   if (url && url !== endpoint.url) {
     payload.url = url;
   }
@@ -855,4 +1218,167 @@ function buildUpdatePayload(
   }
 
   return payload;
+}
+
+function mapRpcResultToOutcome(result: AdminRpcTestResult): RpcTestOutcome {
+  if (result.ok) {
+    return {
+      kind: "success",
+      tip: result.tip,
+      latencyMs: result.latencyMs,
+    };
+  }
+
+  if (result.status === 401) {
+    return { kind: "unauthorized" };
+  }
+
+  return {
+    kind: "error",
+    message: result.message ? `${result.error}: ${result.message}` : result.error,
+  };
+}
+
+function mapRpcErrorToOutcome(error: unknown): RpcTestOutcome {
+  if (error instanceof ApiError) {
+    if (error.status === 401) {
+      return { kind: "unauthorized" };
+    }
+
+    const description =
+      typeof error.body === "object" && error.body && "error" in error.body
+        ? String((error.body as { error?: string }).error ?? error.message)
+        : error.message;
+
+    return { kind: "error", message: description || "Unexpected RPC error" };
+  }
+
+  if (error instanceof Error) {
+    return { kind: "error", message: error.message || "Unexpected RPC error" };
+  }
+
+  return { kind: "error", message: "Unexpected RPC error" };
+}
+
+function renderOutcomeBadge(outcome?: RpcTestOutcome) {
+  const state = outcome ?? { kind: "idle" };
+
+  switch (state.kind) {
+    case "pending":
+      return (
+        <span className="inline-flex items-center rounded-full border border-primary-400/50 bg-primary-500/10 px-3 py-1 text-xs font-semibold text-primary-100">
+          Testing…
+        </span>
+      );
+    case "success":
+      return (
+        <span className="inline-flex items-center rounded-full border border-emerald-500/40 bg-emerald-500/15 px-3 py-1 text-xs font-semibold text-emerald-100">
+          Healthy • tip {state.tip} • {state.latencyMs} ms
+        </span>
+      );
+    case "unauthorized":
+      return (
+        <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/15 px-3 py-1 text-xs font-semibold text-amber-100">
+          Unauthorized
+        </span>
+      );
+    case "error":
+      return (
+        <span className="inline-flex items-center rounded-full border border-rose-500/40 bg-rose-500/15 px-3 py-1 text-xs font-semibold text-rose-200">
+          {state.message}
+        </span>
+      );
+    case "idle":
+    default:
+      return (
+        <span className="inline-flex items-center rounded-full border border-slate-700/60 bg-slate-900/60 px-3 py-1 text-xs font-semibold text-slate-300">
+          Not tested
+        </span>
+      );
+  }
+}
+
+const QUICK_TIPS: Record<number, QuickTipsContent> = {
+  1: {
+    heading: "Recommended settings for Ethereum Mainnet",
+    description:
+      "QuickNode suggests keeping a dedicated primary endpoint for production traffic with conservative span hints.",
+    tips: [
+      {
+        title: "Keep a healthy QPS buffer",
+        description:
+          "Start with 8-12 requests per second and monitor usage spikes before increasing limits.",
+      },
+      {
+        title: "Pin to a high availability region",
+        description:
+          "Choose a region close to your workload to keep latency low; QuickNode's US-EAST clusters work well for most setups.",
+        href: "https://www.quicknode.com/docs/ethereum",
+        hrefLabel: "Ethereum QuickNode guide",
+      },
+    ],
+    fallback: {
+      label: "QuickNode Primary",
+      url: "https://eth-mainnet.quiknode.pro/YOUR-KEY/",
+      qps: "10",
+      minSpan: "8",
+      maxSpan: "512",
+      weight: "1",
+      orderIndex: "0",
+    },
+  },
+  137: {
+    heading: "Recommended settings for Polygon",
+    description:
+      "Polygon RPCs can handle higher concurrency but benefit from tighter spans for fast block sync.",
+    tips: [
+      {
+        title: "Adjust span to follow checkpoints",
+        description: "Keeping span between 4 and 64 helps align with Polygon's checkpoint cadence.",
+      },
+      {
+        title: "Distribute read-heavy workloads",
+        description: "Use multiple secondary providers with lower weights for archival reads.",
+        href: "https://www.quicknode.com/docs/polygon",
+      },
+    ],
+    fallback: {
+      label: "Polygon Primary",
+      url: "https://polygon-mainnet.g.quiknode.pro/YOUR-KEY/",
+      qps: "20",
+      minSpan: "4",
+      maxSpan: "128",
+      weight: "1",
+      orderIndex: "0",
+    },
+  },
+  42161: {
+    heading: "Recommended settings for Arbitrum One",
+    description:
+      "Arbitrum endpoints benefit from aggressive polling to keep up with Nitro confirmations.",
+    tips: [
+      {
+        title: "Enable quick retries",
+        description: "Use short spans (2-32) to recover quickly from sequencing delays.",
+      },
+      {
+        title: "Track latency",
+        description:
+          "Alert if latency exceeds 250 ms; it usually signals congestion or regional drift.",
+      },
+    ],
+    fallback: {
+      label: "Arbitrum Primary",
+      url: "https://arb-mainnet.quiknode.pro/YOUR-KEY/",
+      qps: "12",
+      minSpan: "2",
+      maxSpan: "64",
+      weight: "1",
+      orderIndex: "0",
+    },
+  },
+};
+
+function getQuickTipContent(chainId: number): QuickTipsContent | null {
+  return QUICK_TIPS[chainId] ?? null;
 }

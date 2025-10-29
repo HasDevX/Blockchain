@@ -29,6 +29,7 @@ describe("Admin API routes", () => {
   const chainEndpointRecord: ChainEndpointRecord = {
     id: "endpoint-1",
     chainId: 137,
+    label: "Primary RPC",
     url: "https://polygon-rpc.second",
     isPrimary: true,
     enabled: true,
@@ -98,6 +99,7 @@ describe("Admin API routes", () => {
   let updateChainEndpointMock: ReturnType<typeof vi.fn>;
   let disableChainEndpointMock: ReturnType<typeof vi.fn>;
   let invalidateChainConfigCacheMock: ReturnType<typeof vi.fn>;
+  let unsetPrimaryForOtherEndpointsMock: ReturnType<typeof vi.fn>;
   let createApp: (typeof import("../app"))["createApp"];
   let app: Awaited<ReturnType<typeof createApp>>;
   let authHeader: string;
@@ -122,6 +124,7 @@ describe("Admin API routes", () => {
     listAllChainEndpointsMock = vi.fn(async () => [chainEndpointRecord]);
     createChainEndpointMock = vi.fn(async () => ({
       ...chainEndpointRecord,
+      label: null,
       id: "endpoint-2",
       url: "https://polygon-rpc.new",
       isPrimary: false,
@@ -138,15 +141,18 @@ describe("Admin API routes", () => {
     updateChainEndpointMock = vi.fn(async () => ({
       ...chainEndpointRecord,
       qps: 20,
+      label: "Primary RPC",
       maxSpan: 1200,
       updatedAt: new Date("2024-01-01T00:30:00.000Z"),
     }));
     disableChainEndpointMock = vi.fn(async () => ({
       ...chainEndpointRecord,
+      label: "Primary RPC",
       enabled: false,
       updatedAt: new Date("2024-01-01T00:40:00.000Z"),
     }));
     enqueueReindexMock = vi.fn(async () => undefined);
+    unsetPrimaryForOtherEndpointsMock = vi.fn(async () => undefined);
     getAdminStatusMock = vi.fn(async () => ({
       chains: [
         {
@@ -189,6 +195,7 @@ describe("Admin API routes", () => {
       getChainEndpoint: getChainEndpointMock,
       updateChainEndpoint: updateChainEndpointMock,
       disableChainEndpoint: disableChainEndpointMock,
+      unsetPrimaryForOtherEndpoints: unsetPrimaryForOtherEndpointsMock,
     }));
 
     vi.doMock("../services/tokenHolderRepository", () => ({
@@ -326,6 +333,7 @@ describe("Admin API routes", () => {
               {
                 id: "endpoint-1",
                 chain_id: 137,
+                label: "Primary RPC",
                 url: "https://polygon-rpc.second",
                 is_primary: true,
                 enabled: true,
@@ -363,6 +371,7 @@ describe("Admin API routes", () => {
       expect(response.status).toBe(201);
       expect(createChainEndpointMock).toHaveBeenCalledWith(137, {
         url: "https://polygon-rpc.new",
+        label: null,
         isPrimary: false,
         enabled: true,
         qps: 1,
@@ -372,10 +381,12 @@ describe("Admin API routes", () => {
         orderIndex: 0,
       });
       expect(invalidateChainConfigCacheMock).toHaveBeenCalled();
+      expect(unsetPrimaryForOtherEndpointsMock).not.toHaveBeenCalled();
       expect(response.body).toEqual({
         endpoint: {
           id: "endpoint-2",
           chain_id: 137,
+          label: null,
           url: "https://polygon-rpc.new",
           is_primary: false,
           enabled: true,
@@ -412,10 +423,12 @@ describe("Admin API routes", () => {
         maxSpan: 1200,
       });
       expect(invalidateChainConfigCacheMock).toHaveBeenCalled();
+      expect(unsetPrimaryForOtherEndpointsMock).not.toHaveBeenCalled();
       expect(response.body).toEqual({
         endpoint: {
           id: "endpoint-1",
           chain_id: 137,
+          label: "Primary RPC",
           url: "https://polygon-rpc.second",
           is_primary: true,
           enabled: true,

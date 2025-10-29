@@ -10,6 +10,7 @@ export interface ChainEndpointRecord {
   id: string;
   chainId: number;
   url: string;
+  label: string | null;
   isPrimary: boolean;
   enabled: boolean;
   qps: number;
@@ -26,6 +27,7 @@ interface ChainEndpointRow {
   id: string;
   chain_id: number;
   url: string;
+  label: string | null;
   is_primary: boolean;
   enabled: boolean;
   qps: number;
@@ -478,6 +480,7 @@ function mapChainEndpointRow(row: ChainEndpointRow): ChainEndpointRecord {
     id: row.id,
     chainId: row.chain_id,
     url: row.url,
+    label: row.label,
     isPrimary: row.is_primary,
     enabled: row.enabled,
     qps: row.qps,
@@ -503,6 +506,7 @@ export async function listChainEndpoints(
     `SELECT id::TEXT AS id,
             chain_id,
             url,
+            label,
             is_primary,
             enabled,
             qps,
@@ -534,6 +538,7 @@ export async function listAllChainEndpoints(
     `SELECT id::TEXT AS id,
             chain_id,
             url,
+            label,
             is_primary,
             enabled,
             qps,
@@ -556,6 +561,7 @@ export async function createChainEndpoint(
   chainId: number,
   payload: {
     url: string;
+    label: string | null;
     isPrimary: boolean;
     enabled: boolean;
     qps: number;
@@ -572,6 +578,7 @@ export async function createChainEndpoint(
     `INSERT INTO chain_endpoints (
         chain_id,
         url,
+        label,
         is_primary,
         enabled,
         qps,
@@ -580,10 +587,11 @@ export async function createChainEndpoint(
         weight,
         order_index
       )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING id::TEXT AS id,
                chain_id,
                url,
+               label,
                is_primary,
                enabled,
                qps,
@@ -597,6 +605,7 @@ export async function createChainEndpoint(
     [
       chainId,
       payload.url,
+      payload.label,
       payload.isPrimary,
       payload.enabled,
       payload.qps,
@@ -615,6 +624,7 @@ export async function updateChainEndpoint(
   endpointId: string,
   updates: Partial<{
     url: string;
+  label: string | null;
     isPrimary: boolean;
     enabled: boolean;
     qps: number;
@@ -637,20 +647,22 @@ export async function updateChainEndpoint(
   const result = await client.query<ChainEndpointRow>(
     `UPDATE chain_endpoints
         SET url = COALESCE($3, url),
-            is_primary = COALESCE($4, is_primary),
-            enabled = COALESCE($5, enabled),
-            qps = COALESCE($6, qps),
-            min_span = COALESCE($7, min_span),
-            max_span = COALESCE($8, max_span),
-            weight = COALESCE($9, weight),
-            order_index = COALESCE($10, order_index),
-            last_health = COALESCE($11, last_health),
-            last_checked_at = COALESCE($12, last_checked_at),
+            label = COALESCE($4, label),
+            is_primary = COALESCE($5, is_primary),
+            enabled = COALESCE($6, enabled),
+            qps = COALESCE($7, qps),
+            min_span = COALESCE($8, min_span),
+            max_span = COALESCE($9, max_span),
+            weight = COALESCE($10, weight),
+            order_index = COALESCE($11, order_index),
+            last_health = COALESCE($12, last_health),
+            last_checked_at = COALESCE($13, last_checked_at),
             updated_at = NOW()
       WHERE chain_id = $1 AND id = $2
       RETURNING id::TEXT AS id,
                 chain_id,
                 url,
+                label,
                 is_primary,
                 enabled,
                 qps,
@@ -665,6 +677,7 @@ export async function updateChainEndpoint(
       chainId,
       endpointId,
       updates.url ?? null,
+      updates.label ?? null,
       updates.isPrimary ?? null,
       updates.enabled ?? null,
       updates.qps ?? null,
@@ -703,6 +716,7 @@ export async function getChainEndpoint(
     `SELECT id::TEXT AS id,
             chain_id,
             url,
+            label,
             is_primary,
             enabled,
             qps,
@@ -723,6 +737,24 @@ export async function getChainEndpoint(
   }
 
   return mapChainEndpointRow(result.rows[0]!);
+}
+
+export async function unsetPrimaryForOtherEndpoints(
+  chainId: number,
+  primaryEndpointId: string,
+  queryable?: Queryable,
+): Promise<void> {
+  const client = getQueryable(queryable);
+
+  await client.query(
+    `UPDATE chain_endpoints
+        SET is_primary = FALSE,
+            updated_at = NOW()
+      WHERE chain_id = $1
+        AND id <> $2::BIGINT
+        AND is_primary = TRUE`,
+    [chainId, primaryEndpointId],
+  );
 }
 
 export function maskSecret(secret: string | null): string | null {

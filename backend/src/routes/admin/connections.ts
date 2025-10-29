@@ -6,6 +6,7 @@ import {
   fetchChainConfigs,
   getChainEndpoint,
   listAllChainEndpoints,
+  unsetPrimaryForOtherEndpoints,
   updateChainEndpoint,
 } from "../../services/chainConfigService";
 import { invalidateChainConfigCache } from "../../services/chainConfigProvider";
@@ -66,6 +67,7 @@ async function handleCreateEndpoint(req: Request, res: Response) {
   try {
     const record = await createChainEndpoint(chainId, {
       url: value.url!,
+      label: value.label ?? null,
       isPrimary: value.isPrimary ?? false,
       enabled: value.enabled ?? true,
       qps: value.qps ?? 1,
@@ -74,6 +76,10 @@ async function handleCreateEndpoint(req: Request, res: Response) {
       weight: value.weight ?? 1,
       orderIndex: value.orderIndex ?? 0,
     });
+
+    if (value.isPrimary) {
+      await unsetPrimaryForOtherEndpoints(chainId, record.id);
+    }
 
     invalidateChainConfigCache();
     res.status(201).json({ endpoint: serializeEndpoint(record) });
@@ -141,6 +147,10 @@ async function handleUpdateEndpoint(req: Request, res: Response) {
       return;
     }
 
+    if (updates.isPrimary === true) {
+      await unsetPrimaryForOtherEndpoints(chainId, updated.id);
+    }
+
     invalidateChainConfigCache();
     res.json({ endpoint: serializeEndpoint(updated) });
   } catch (error) {
@@ -205,6 +215,7 @@ function serializeEndpoint(endpoint: ChainEndpointRecord) {
   return {
     id: endpoint.id,
     chain_id: endpoint.chainId,
+    label: endpoint.label,
     url: endpoint.url,
     is_primary: endpoint.isPrimary,
     enabled: endpoint.enabled,
@@ -225,6 +236,7 @@ type ValidationResult =
 
 type EndpointPayload = Partial<{
   url: string;
+  label: string | null;
   isPrimary: boolean;
   enabled: boolean;
   qps: number;
@@ -253,6 +265,25 @@ function validateEndpointPayload(
     }
 
     value.url = normalized;
+  }
+
+  if (payload.label !== undefined) {
+    if (payload.label === null) {
+      value.label = null;
+    } else if (typeof payload.label !== "string") {
+      return { ok: false, error: "invalid_label" };
+    } else {
+      const normalized = payload.label.trim();
+      if (normalized.length === 0) {
+        value.label = null;
+      } else if (normalized.length > 80) {
+        return { ok: false, error: "invalid_label" };
+      } else {
+        value.label = normalized;
+      }
+    }
+  } else if (!partial) {
+    value.label = null;
   }
 
   if (payload.is_primary !== undefined || (!partial && payload.is_primary === undefined)) {

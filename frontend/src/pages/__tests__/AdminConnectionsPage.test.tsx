@@ -145,7 +145,7 @@ describe("AdminConnectionsPage", () => {
       lastCheckedAt: null,
       updatedAt: new Date().toISOString(),
     });
-  mutateMock.mockReturnValueOnce(new Promise(() => {}));
+    mutateMock.mockReturnValueOnce(new Promise(() => {}));
 
     renderPage();
 
@@ -165,16 +165,20 @@ describe("AdminConnectionsPage", () => {
     });
 
     await waitFor(() => {
-      expect(createEndpointMock).toHaveBeenCalledWith(1, {
-        url: "https://rpc-new.example",
-        isPrimary: true,
-        enabled: true,
-        qps: 25,
-        minSpan: 8,
-        maxSpan: 1000,
-        weight: 1,
-        orderIndex: 0,
-      }, "test-token");
+      expect(createEndpointMock).toHaveBeenCalledWith(
+        1,
+        {
+          url: "https://rpc-new.example",
+          isPrimary: true,
+          enabled: true,
+          qps: 25,
+          minSpan: 8,
+          maxSpan: 1000,
+          weight: 1,
+          orderIndex: 0,
+        },
+        "test-token",
+      );
     });
 
     await waitFor(() => {
@@ -184,8 +188,11 @@ describe("AdminConnectionsPage", () => {
 
   it("updates an endpoint", async () => {
     const user = userEvent.setup();
-    updateEndpointMock.mockResolvedValue({ ...SAMPLE_CONNECTIONS.chains[0].endpoints[0], weight: 3 });
-  mutateMock.mockReturnValueOnce(new Promise(() => {}));
+    updateEndpointMock.mockResolvedValue({
+      ...SAMPLE_CONNECTIONS.chains[0].endpoints[0],
+      weight: 3,
+    });
+    mutateMock.mockReturnValueOnce(new Promise(() => {}));
 
     renderPage();
 
@@ -203,9 +210,14 @@ describe("AdminConnectionsPage", () => {
     });
 
     await waitFor(() => {
-      expect(updateEndpointMock).toHaveBeenCalledWith(1, "endpoint-1", {
-        weight: 3,
-      }, "test-token");
+      expect(updateEndpointMock).toHaveBeenCalledWith(
+        1,
+        "endpoint-1",
+        {
+          weight: 3,
+        },
+        "test-token",
+      );
     });
 
     await waitFor(() => {
@@ -217,7 +229,7 @@ describe("AdminConnectionsPage", () => {
     const user = userEvent.setup();
     disableEndpointMock.mockResolvedValue(undefined);
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-  mutateMock.mockReturnValueOnce(new Promise(() => {}));
+    mutateMock.mockReturnValueOnce(new Promise(() => {}));
 
     renderPage();
 
@@ -249,7 +261,10 @@ describe("AdminConnectionsPage", () => {
     });
 
     await waitFor(() => {
-      expect(testRpcMock).toHaveBeenCalledWith({ url: "https://rpc-mainnet.example", chainId: 1 }, "test-token");
+      expect(testRpcMock).toHaveBeenCalledWith(
+        { url: "https://rpc-mainnet.example", chainId: 1 },
+        "test-token",
+      );
     });
   });
 

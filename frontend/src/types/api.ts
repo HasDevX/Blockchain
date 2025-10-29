@@ -134,6 +134,7 @@ export interface AdminSettings {
 export interface AdminConnectionEndpoint {
   id: string;
   chainId: number;
+  label: string | null;
   url: string;
   isPrimary: boolean;
   enabled: boolean;
