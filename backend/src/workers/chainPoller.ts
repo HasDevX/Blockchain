@@ -5,9 +5,13 @@ import {
   RpcClient,
   RpcClientOptions,
   RpcLogEntry,
+  RpcEndpointError,
+  RpcEndpointErrorDetails,
+  RpcEndpointErrorKind,
   RpcRateLimitError,
   RpcTransactionReceipt,
 } from "../lib/rpcClient";
+import { safeHexToBigInt } from "../lib/hex";
 import {
   addressToBuffer,
   aggregateTransferDeltas,
@@ -38,7 +42,8 @@ import {
   shrinkSpan,
   setSpanOverrides,
 } from "./adaptiveSpan";
-import type { ChainConfigRecord } from "../services/chainConfigService";
+import type { ChainConfigRecord, ChainEndpointRecord } from "../services/chainConfigService";
+import { updateChainEndpoint } from "../services/chainConfigService";
 import { getRuntimeChainConfig } from "../services/chainConfigProvider";
 
 const RETRY_BASE_MS = Math.max(parseIntegerEnv("INDEXER_BACKOFF_MS", 1_500), 100);
@@ -61,6 +66,11 @@ interface ChainPollerConfig {
   useCheckpoint: boolean;
 }
 
+type EndpointSelection = {
+  endpoint: ChainEndpointRecord | null;
+  url: string;
+};
+
 export class ChainPoller {
   private rpcClient: RpcClient;
   private readonly storeBatch: (batch: ExecutionBatch) => Promise<void>;
@@ -76,8 +86,11 @@ export class ChainPoller {
     qps: number;
     minSpan: number;
     maxSpan: number;
+    endpointId: string | null;
   } | null = null;
   private readinessState: "ready" | "disabled" | "missingRpc" | null = null;
+  private activeEndpoint: ChainEndpointRecord | null = null;
+  private readonly failedEndpoints = new Map<string, number>();
 
   constructor(
     private readonly config: ChainPollerConfig,
@@ -106,44 +119,164 @@ export class ChainPoller {
       }
       this.readinessState = "disabled";
       this.lastAppliedSettings = null;
+      this.activeEndpoint = null;
       return false;
     }
+    if (runtimeConfig.endpoints.length > 0) {
+      this.pruneFailedEndpoints(runtimeConfig);
+    }
 
-    if (!runtimeConfig.rpcUrl) {
+    const selection = this.selectEndpoint(runtimeConfig);
+
+    if (!selection) {
       if (this.readinessState !== "missingRpc") {
         logPollerError(this.config.chainId, "rpc_url_missing");
       }
       this.readinessState = "missingRpc";
       this.lastAppliedSettings = null;
+      this.activeEndpoint = null;
       return false;
     }
 
+    this.applySelection(runtimeConfig, selection);
+    this.readinessState = "ready";
+
+    return true;
+  }
+
+  private pruneFailedEndpoints(config: ChainConfigRecord): void {
+    if (this.failedEndpoints.size === 0) {
+      return;
+    }
+
+    const endpointMap = new Map(config.endpoints.map((endpoint) => [endpoint.id, endpoint]));
+
+    for (const [endpointId, failedAt] of this.failedEndpoints) {
+      const match = endpointMap.get(endpointId);
+
+      if (!match) {
+        this.failedEndpoints.delete(endpointId);
+        continue;
+      }
+
+      if (match.updatedAt.getTime() > failedAt) {
+        this.failedEndpoints.delete(endpointId);
+      }
+    }
+  }
+
+  private selectEndpoint(config: ChainConfigRecord): EndpointSelection | null {
+    if (config.endpoints.length > 0) {
+      for (const endpoint of config.endpoints) {
+        if (this.failedEndpoints.has(endpoint.id)) {
+          continue;
+        }
+
+        if (!endpoint.enabled) {
+          continue;
+        }
+
+        return { endpoint, url: endpoint.url };
+      }
+
+      return null;
+    }
+
+    if (config.rpcUrl) {
+      return { endpoint: null, url: config.rpcUrl };
+    }
+
+    return null;
+  }
+
+  private applySelection(config: ChainConfigRecord, selection: EndpointSelection): void {
+    const appliedMinSpan = selection.endpoint ? selection.endpoint.minSpan : config.minSpan;
+    const appliedMaxSpan = selection.endpoint ? selection.endpoint.maxSpan : config.maxSpan;
+    const appliedQps =
+      selection.endpoint && selection.endpoint.qps > 0 ? selection.endpoint.qps : config.qps;
+
     setSpanOverrides(this.config.chainId, {
-      min: BigInt(runtimeConfig.minSpan),
-      max: BigInt(runtimeConfig.maxSpan),
+      min: BigInt(appliedMinSpan),
+      max: BigInt(appliedMaxSpan),
     });
 
     const shouldRecreateClient =
       !this.lastAppliedSettings ||
-      this.lastAppliedSettings.rpcUrl !== runtimeConfig.rpcUrl ||
-      this.lastAppliedSettings.qps !== runtimeConfig.qps;
+      this.lastAppliedSettings.rpcUrl !== selection.url ||
+      this.lastAppliedSettings.qps !== appliedQps;
 
     if (shouldRecreateClient) {
       this.rpcClient = new RpcClient(
-        runtimeConfig.rpcUrl,
-        buildRpcClientOptionsFromConfig(runtimeConfig),
+        selection.url,
+        buildRpcClientOptionsFromConfig(config, selection.endpoint),
       );
     }
 
     this.lastAppliedSettings = {
-      rpcUrl: runtimeConfig.rpcUrl,
-      qps: runtimeConfig.qps,
-      minSpan: runtimeConfig.minSpan,
-      maxSpan: runtimeConfig.maxSpan,
+      rpcUrl: selection.url,
+      qps: appliedQps,
+      minSpan: appliedMinSpan,
+      maxSpan: appliedMaxSpan,
+      endpointId: selection.endpoint ? selection.endpoint.id : null,
     };
-    this.readinessState = "ready";
 
-    return true;
+    this.activeEndpoint = selection.endpoint;
+  }
+
+  private getEndpointHost(url: string): string {
+    try {
+      return new URL(url).host;
+    } catch (error) {
+      return url;
+    }
+  }
+
+  private async handleEndpointFailure(error: RpcEndpointError): Promise<void> {
+    const endpointUrl =
+      this.activeEndpoint?.url ??
+      this.lastAppliedSettings?.rpcUrl ??
+      this.runtimeConfig?.rpcUrl ??
+      getRpcUrl(this.config.chainId);
+
+    const endpointHost = endpointUrl ? this.getEndpointHost(endpointUrl) : "unknown";
+
+    logEndpointFailure({
+      chainId: this.config.chainId,
+      endpointHost,
+      method: error.method,
+      error: error.kind,
+      details: error.details,
+    });
+
+    const endpointId = this.activeEndpoint?.id ?? this.lastAppliedSettings?.endpointId ?? null;
+
+    if (endpointId) {
+      this.failedEndpoints.set(endpointId, Date.now());
+
+      try {
+        await updateChainEndpoint(this.config.chainId, endpointId, {
+          lastHealth: error.kind,
+          lastCheckedAt: new Date(),
+        });
+      } catch (updateError) {
+        logPollerError(this.config.chainId, `endpoint_health_update_failed:${(updateError as Error).message}`);
+      }
+    }
+
+    if (!this.runtimeConfig) {
+      return;
+    }
+
+    this.pruneFailedEndpoints(this.runtimeConfig);
+    const nextSelection = this.selectEndpoint(this.runtimeConfig);
+
+    if (!nextSelection) {
+      this.readinessState = "missingRpc";
+      return;
+    }
+
+    this.applySelection(this.runtimeConfig, nextSelection);
+    this.readinessState = "ready";
   }
 
   async run(): Promise<void> {
@@ -182,7 +315,18 @@ export class ChainPoller {
       this.lastProcessed = await this.getCheckpointFn(this.config.chainId);
     }
 
-    const latestBlock = await this.rpcClient.getBlockNumber();
+    let latestBlock: bigint;
+
+    try {
+      latestBlock = await this.rpcClient.getBlockNumber();
+    } catch (error) {
+      if (error instanceof RpcEndpointError) {
+        await this.handleEndpointFailure(error);
+        return false;
+      }
+
+      throw error;
+    }
     const confirmations = BigInt(this.config.confirmations);
 
     if (latestBlock < confirmations) {
@@ -248,6 +392,11 @@ export class ChainPoller {
 
         return true;
       } catch (error) {
+        if (error instanceof RpcEndpointError) {
+          await this.handleEndpointFailure(error);
+          return false;
+        }
+
         if (error instanceof RpcRateLimitError) {
           throw error;
         }
@@ -441,7 +590,7 @@ function buildTokenTransferRows(chainId: number, logs: RpcLogEntry[]): TokenTran
     rows.push({
       chainId,
       txHash: requireBuffer(log.transactionHash),
-      logIndex: hexToNumber(log.logIndex),
+      logIndex: hexToNumber(log.logIndex, { method: "eth_getLogs", field: "logIndex" }),
       token: addressToBuffer(log.address),
       from: addressToBuffer(transfer.from),
       to: addressToBuffer(transfer.to),
@@ -453,12 +602,20 @@ function buildTokenTransferRows(chainId: number, logs: RpcLogEntry[]): TokenTran
 }
 
 function mapBlockRow(chainId: number, block: RpcBlock): BlockRow {
+  const blockNumber = requireHexBigInt(block.number, {
+    method: "eth_getBlockByNumber",
+    field: "number",
+  });
+
   return {
     chainId,
-    number: BigInt(block.number),
+    number: blockNumber,
     hash: requireBuffer(block.hash),
     parentHash: requireBuffer(block.parentHash),
-    timestamp: hexToDate(block.timestamp),
+    timestamp: hexToDate(block.timestamp, {
+      method: "eth_getBlockByNumber",
+      field: "timestamp",
+    }),
   };
 }
 
@@ -467,28 +624,44 @@ function mapTransactionRow(
   blockNumber: bigint,
   tx: RpcBlock["transactions"][number],
 ): TransactionRow {
+  const method = "eth_getBlockByNumber";
+
   return {
     chainId,
     hash: requireBuffer(tx.hash),
     blockNumber,
     from: addressToBuffer(normalizeAddress(tx.from)),
     to: tx.to ? addressToBuffer(normalizeAddress(tx.to)) : null,
-    value: hexToBigIntString(tx.value) ?? "0",
-    nonce: hexToBigIntString(tx.nonce) ?? "0",
-    gas: hexToBigIntString(tx.gas),
-    gasPrice: tx.gasPrice ? hexToBigIntString(tx.gasPrice) : null,
+    value:
+      hexToBigIntString(tx.value, {
+        method,
+        field: "value",
+      }) ?? "0",
+    nonce:
+      hexToBigIntString(tx.nonce, {
+        method,
+        field: "nonce",
+      }) ?? "0",
+    gas: hexToBigIntString(tx.gas, { method, field: "gas" }),
+    gasPrice: tx.gasPrice
+      ? hexToBigIntString(tx.gasPrice, { method, field: "gasPrice" })
+      : null,
     input: bufferFromHex(tx.input),
   };
 }
 
 function mapReceiptRow(chainId: number, receipt: RpcTransactionReceipt): ReceiptRow {
+  const method = "eth_getTransactionReceipt";
+
   return {
     chainId,
     txHash: requireBuffer(receipt.transactionHash),
-    status: hexToBoolean(receipt.status),
-    gasUsed: receipt.gasUsed ? hexToBigIntString(receipt.gasUsed) : null,
+    status: hexToBoolean(receipt.status, { method, field: "status" }),
+    gasUsed: receipt.gasUsed
+      ? hexToBigIntString(receipt.gasUsed, { method, field: "gasUsed" })
+      : null,
     effectiveGasPrice: receipt.effectiveGasPrice
-      ? hexToBigIntString(receipt.effectiveGasPrice)
+      ? hexToBigIntString(receipt.effectiveGasPrice, { method, field: "effectiveGasPrice" })
       : null,
     contractAddress: receipt.contractAddress
       ? addressToBuffer(normalizeAddress(receipt.contractAddress))
@@ -497,6 +670,7 @@ function mapReceiptRow(chainId: number, receipt: RpcTransactionReceipt): Receipt
 }
 
 function mapLogRows(chainId: number, receipt: RpcTransactionReceipt): LogRow[] {
+  const method = "eth_getTransactionReceipt";
   const rows: LogRow[] = [];
 
   for (const log of receipt.logs) {
@@ -509,7 +683,7 @@ function mapLogRows(chainId: number, receipt: RpcTransactionReceipt): LogRow[] {
     rows.push({
       chainId,
       txHash: requireBuffer(log.transactionHash ?? receipt.transactionHash),
-      logIndex: hexToNumber(log.logIndex),
+  logIndex: hexToNumber(log.logIndex, { method, field: "logIndex" }),
       address: addressToBuffer(normalizeAddress(log.address)),
       topic0: topics[0] ? requireBuffer(topics[0]) : null,
       topic1: topics[1] ? requireBuffer(topics[1]) : null,
@@ -548,32 +722,55 @@ function bufferFromHex(hex: string | null | undefined): Buffer | null {
   return Buffer.from(normalized, "hex");
 }
 
-function hexToBigIntString(hex: string | null | undefined): string | null {
-  if (!hex) {
-    return null;
+type HexContext = {
+  method: string;
+  field: string;
+};
+
+function requireHexBigInt(hex: string | null | undefined, context: HexContext): bigint {
+  const parsed = safeHexToBigInt(hex ?? null);
+
+  if (parsed === null) {
+    throw new RpcEndpointError(
+      `invalid hex value for ${context.method}.${context.field}`,
+      "invalid_hex",
+      context.method,
+      { value: hex ?? null },
+    );
   }
 
-  return BigInt(hex).toString();
+  return parsed;
 }
 
-function hexToBoolean(hex: string | null | undefined): boolean | null {
+function hexToBigIntString(
+  hex: string | null | undefined,
+  context: HexContext,
+): string | null {
   if (hex === null || hex === undefined) {
     return null;
   }
 
-  return BigInt(hex) === 1n;
+  return requireHexBigInt(hex, context).toString();
 }
 
-function hexToNumber(hex: string | null | undefined): number {
-  if (!hex) {
+function hexToBoolean(hex: string | null | undefined, context: HexContext): boolean | null {
+  if (hex === null || hex === undefined) {
+    return null;
+  }
+
+  return requireHexBigInt(hex, context) === 1n;
+}
+
+function hexToNumber(hex: string | null | undefined, context: HexContext): number {
+  if (hex === null || hex === undefined) {
     return 0;
   }
 
-  return Number(BigInt(hex));
+  return Number(requireHexBigInt(hex, context));
 }
 
-function hexToDate(hex: string): Date {
-  const seconds = Number(BigInt(hex));
+function hexToDate(hex: string, context: HexContext): Date {
+  const seconds = Number(requireHexBigInt(hex, context));
   return new Date(seconds * 1_000);
 }
 
@@ -607,12 +804,17 @@ function buildRpcClientOptionsFromEnv(): RpcClientOptions | undefined {
   return undefined;
 }
 
-function buildRpcClientOptionsFromConfig(config: ChainConfigRecord): RpcClientOptions | undefined {
+function buildRpcClientOptionsFromConfig(
+  config: ChainConfigRecord,
+  endpoint?: ChainEndpointRecord | null,
+): RpcClientOptions | undefined {
   const minDelay = parseIntegerEnv("INDEXER_RPC_MIN_DELAY_MS", 0);
   const options: RpcClientOptions = {};
 
-  if (config.qps > 0) {
-    options.qps = config.qps;
+  const qps = endpoint && endpoint.qps > 0 ? endpoint.qps : config.qps;
+
+  if (qps > 0) {
+    options.qps = qps;
   }
 
   if (minDelay > 0) {
@@ -721,6 +923,26 @@ function logError(chainId: number, error: Error) {
       event: "chain.poller.error",
       chainId,
       message: error.message,
+    }),
+  );
+}
+
+function logEndpointFailure(details: {
+  chainId: number;
+  endpointHost: string;
+  method: string;
+  error: RpcEndpointErrorKind;
+  details: RpcEndpointErrorDetails;
+}) {
+  console.error(
+    JSON.stringify({
+      event: "chain.poller.rpc_error",
+      chainId: details.chainId,
+      endpointHost: details.endpointHost,
+      method: details.method,
+      error: details.error,
+      value: details.details.value ?? undefined,
+      status: details.details.status ?? undefined,
     }),
   );
 }

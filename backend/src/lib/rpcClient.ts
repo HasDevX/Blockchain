@@ -1,3 +1,5 @@
+import { safeHexToBigInt } from "./hex";
+
 export class RpcRateLimitError extends Error {
   readonly retryAfterMs: number;
 
@@ -16,6 +18,25 @@ export class RpcError extends Error {
   ) {
     super(message);
     this.name = "RpcError";
+  }
+}
+
+export type RpcEndpointErrorKind = "invalid_hex" | "unauthorized";
+
+export interface RpcEndpointErrorDetails {
+  value?: string | null;
+  status?: number;
+}
+
+export class RpcEndpointError extends Error {
+  constructor(
+    message: string,
+    readonly kind: RpcEndpointErrorKind,
+    readonly method: string,
+    readonly details: RpcEndpointErrorDetails = {},
+  ) {
+    super(message);
+    this.name = "RpcEndpointError";
   }
 }
 
@@ -90,6 +111,15 @@ export class RpcClient {
       throw new RpcRateLimitError(`RPC ${method} rate limited`, retryAfter);
     }
 
+    if (response.status === 401 || response.status === 403) {
+      throw new RpcEndpointError(
+        `RPC request failed with status ${response.status}`,
+        "unauthorized",
+        method,
+        { status: response.status },
+      );
+    }
+
     if (!response.ok) {
       throw new Error(`RPC request failed with status ${response.status}`);
     }
@@ -111,7 +141,18 @@ export class RpcClient {
 
   async getBlockNumber(): Promise<bigint> {
     const result = await this.call<string>("eth_blockNumber", []);
-    return BigInt(result);
+    const parsed = safeHexToBigInt(result);
+
+    if (parsed === null) {
+      throw new RpcEndpointError(
+        "eth_blockNumber returned invalid hex",
+        "invalid_hex",
+        "eth_blockNumber",
+        { value: result },
+      );
+    }
+
+    return parsed;
   }
 
   async getLogs(params: {
