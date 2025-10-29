@@ -517,7 +517,7 @@ export async function listChainEndpoints(
             last_health,
             last_checked_at,
             updated_at
-       FROM chain_endpoints
+       FROM public.chain_endpoints
       WHERE chain_id = $1
         ${includeDisabled ? "" : "AND enabled = TRUE"}
       ORDER BY is_primary DESC, order_index ASC, id::BIGINT ASC`,
@@ -549,7 +549,7 @@ export async function listAllChainEndpoints(
             last_health,
             last_checked_at,
             updated_at
-       FROM chain_endpoints
+       FROM public.chain_endpoints
       ${includeDisabled ? "" : "WHERE enabled = TRUE"}
       ORDER BY chain_id ASC, is_primary DESC, order_index ASC, id::BIGINT ASC`,
   );
@@ -575,7 +575,7 @@ export async function createChainEndpoint(
   const client = getQueryable(queryable);
 
   const result = await client.query<ChainEndpointRow>(
-    `INSERT INTO chain_endpoints (
+    `INSERT INTO public.chain_endpoints (
         chain_id,
         url,
         label,
@@ -704,7 +704,7 @@ export async function updateChainEndpoint(
   const setClause = assignments.join(",\n            ");
 
   const result = await client.query<ChainEndpointRow>(
-    `UPDATE chain_endpoints
+    `UPDATE public.chain_endpoints
         SET ${setClause}
       WHERE chain_id = $1 AND id = $2
       RETURNING id::TEXT AS id,
@@ -761,7 +761,7 @@ export async function getChainEndpoint(
             last_health,
             last_checked_at,
             updated_at
-       FROM chain_endpoints
+       FROM public.chain_endpoints
       WHERE chain_id = $1 AND id = $2`,
     [chainId, endpointId],
   );
@@ -795,7 +795,7 @@ export async function findChainEndpointByUrl(
             last_health,
             last_checked_at,
             updated_at
-       FROM chain_endpoints
+       FROM public.chain_endpoints
       WHERE chain_id = $1 AND url = $2
       ORDER BY id::BIGINT ASC
       LIMIT 1`,
@@ -817,7 +817,7 @@ export async function unsetPrimaryForOtherEndpoints(
   const client = getQueryable(queryable);
 
   await client.query(
-    `UPDATE chain_endpoints
+    `UPDATE public.chain_endpoints
         SET is_primary = FALSE,
             updated_at = NOW()
       WHERE chain_id = $1
