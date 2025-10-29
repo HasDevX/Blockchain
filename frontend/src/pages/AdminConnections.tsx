@@ -264,6 +264,7 @@ export function AdminConnectionsPage() {
     const payload: AdminRpcTestPayload = {
       url: endpoint.url,
       chainId: chain.chainId,
+      endpointId: endpoint.id,
     };
 
     setTestingEndpointId(endpoint.id);
@@ -281,6 +282,8 @@ export function AdminConnectionsPage() {
       } else if (outcome.kind === "error") {
         toast.error(outcome.message);
       }
+
+      await mutate();
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         setEndpointStatuses((previous) => ({
@@ -296,6 +299,8 @@ export function AdminConnectionsPage() {
       setEndpointStatuses((previous) => ({ ...previous, [endpoint.id]: outcome }));
       toast.error(outcome.kind === "error" ? outcome.message : "Unable to test endpoint");
       console.error(err);
+
+      await mutate();
     } finally {
       setTestingEndpointId(null);
     }
@@ -435,9 +440,7 @@ export function AdminConnectionsPage() {
     const label = formState.label.trim();
     const trimmedUrl = formState.url.trim();
 
-    if (label.length === 0) {
-      errors.label = "Label is required";
-    } else if (label.length > 80) {
+    if (label.length > 80) {
       errors.label = "Label must be 80 characters or fewer";
     }
 
@@ -860,7 +863,6 @@ function EndpointModal({
                 value={formState.label}
                 onChange={(event) => onChange("label", event.target.value)}
                 placeholder="Primary QuickNode"
-                required
               />
               {formErrors.label ? (
                 <p className="mt-1 text-xs text-rose-400">{formErrors.label}</p>
@@ -1156,8 +1158,7 @@ function parseInteger(value: string): number | null {
 }
 
 function buildCreatePayload(form: EndpointFormState): AdminEndpointCreatePayload {
-  return {
-    label: form.label.trim(),
+  const payload: AdminEndpointCreatePayload = {
     url: form.url.trim(),
     isPrimary: form.isPrimary,
     enabled: form.enabled,
@@ -1167,6 +1168,13 @@ function buildCreatePayload(form: EndpointFormState): AdminEndpointCreatePayload
     weight: parseInteger(form.weight) ?? 1,
     orderIndex: parseInteger(form.orderIndex) ?? 0,
   };
+
+  const label = form.label.trim();
+  if (label.length > 0) {
+    payload.label = label;
+  }
+
+  return payload;
 }
 
 function buildUpdatePayload(
@@ -1176,7 +1184,7 @@ function buildUpdatePayload(
   const payload: AdminEndpointUpdatePayload = {};
   const label = form.label.trim();
   if (label !== (endpoint.label ?? "")) {
-    payload.label = label;
+    payload.label = label.length > 0 ? label : null;
   }
 
   const url = form.url.trim();
@@ -1302,79 +1310,83 @@ const QUICK_TIPS: Record<number, QuickTipsContent> = {
   1: {
     heading: "Recommended settings for Ethereum Mainnet",
     description:
-      "QuickNode suggests keeping a dedicated primary endpoint for production traffic with conservative span hints.",
+      "Pair your QuickNode primary with a throttled public fallback so hot reloads stay healthy during provider incidents.",
     tips: [
       {
-        title: "Keep a healthy QPS buffer",
+        title: "QuickNode primary URL",
         description:
-          "Start with 8-12 requests per second and monitor usage spikes before increasing limits.",
+          "Copy the HTTPS endpoint from your QuickNode dashboard (format: https://<region>.ethereum.quiknode.pro/<API_KEY>/).",
+        href: "https://www.quicknode.com/docs/ethereum",
+        hrefLabel: "QuickNode guide",
       },
       {
-        title: "Pin to a high availability region",
+        title: "Public fallback defaults",
         description:
-          "Choose a region close to your workload to keep latency low; QuickNode's US-EAST clusters work well for most setups.",
-        href: "https://www.quicknode.com/docs/ethereum",
-        hrefLabel: "Ethereum QuickNode guide",
+          "Use Apply recommended defaults to add Ankr's shared RPC with low concurrency so it only engages during outages.",
       },
     ],
     fallback: {
-      label: "QuickNode Primary",
-      url: "https://eth-mainnet.quiknode.pro/YOUR-KEY/",
-      qps: "10",
+      label: "Ankr Fallback",
+      url: "https://rpc.ankr.com/eth/YOUR-KEY/",
+      qps: "1",
       minSpan: "8",
-      maxSpan: "512",
+      maxSpan: "1000",
       weight: "1",
-      orderIndex: "0",
+      orderIndex: "1",
     },
   },
   137: {
     heading: "Recommended settings for Polygon",
     description:
-      "Polygon RPCs can handle higher concurrency but benefit from tighter spans for fast block sync.",
+      "Keep your QuickNode primary online and add the public Polygon RPC as a gentle fallback with low request pressure.",
     tips: [
       {
-        title: "Adjust span to follow checkpoints",
-        description: "Keeping span between 4 and 64 helps align with Polygon's checkpoint cadence.",
+        title: "QuickNode primary URL",
+        description:
+          "Format: https://<region>.polygon.quiknode.pro/<API_KEY>/ (include your key and trailing slash).",
+        href: "https://www.quicknode.com/docs/polygon",
       },
       {
-        title: "Distribute read-heavy workloads",
-        description: "Use multiple secondary providers with lower weights for archival reads.",
-        href: "https://www.quicknode.com/docs/polygon",
+        title: "Public fallback defaults",
+        description:
+          "Apply the Polygon public RPC with QPS=1 and span 8-1000 so it steps in without exhausting shared capacity.",
       },
     ],
     fallback: {
-      label: "Polygon Primary",
-      url: "https://polygon-mainnet.g.quiknode.pro/YOUR-KEY/",
-      qps: "20",
-      minSpan: "4",
-      maxSpan: "128",
+      label: "Polygon Public RPC",
+      url: "https://polygon-rpc.com",
+      qps: "1",
+      minSpan: "8",
+      maxSpan: "1000",
       weight: "1",
-      orderIndex: "0",
+      orderIndex: "1",
     },
   },
   42161: {
     heading: "Recommended settings for Arbitrum One",
     description:
-      "Arbitrum endpoints benefit from aggressive polling to keep up with Nitro confirmations.",
+      "Run a QuickNode primary and layered public fallback so Nitro sequencing hiccups don't stall ingestion.",
     tips: [
       {
-        title: "Enable quick retries",
-        description: "Use short spans (2-32) to recover quickly from sequencing delays.",
+        title: "QuickNode primary URL",
+        description:
+          "Use https://arbitrum-mainnet.quiknode.pro/<API_KEY>/ (or your region of choice) as the priority endpoint.",
+        href: "https://www.quicknode.com/docs/arbitrum",
       },
       {
-        title: "Track latency",
+        title: "Public fallback defaults",
         description:
-          "Alert if latency exceeds 250 ms; it usually signals congestion or regional drift.",
+          "Apply the Arbitrum One public RPC with 1 QPS and wide spans so it only handles occasional failover traffic.",
       },
     ],
     fallback: {
-      label: "Arbitrum Primary",
-      url: "https://arb-mainnet.quiknode.pro/YOUR-KEY/",
-      qps: "12",
-      minSpan: "2",
-      maxSpan: "64",
+      label: "Arbitrum Public RPC",
+      url: "https://arb1.arbitrum.io/rpc",
+      qps: "1",
+      minSpan: "8",
+      maxSpan: "1000",
       weight: "1",
-      orderIndex: "0",
+      orderIndex: "1",
     },
   },
 };

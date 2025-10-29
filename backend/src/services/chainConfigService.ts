@@ -773,6 +773,42 @@ export async function getChainEndpoint(
   return mapChainEndpointRow(result.rows[0]!);
 }
 
+export async function findChainEndpointByUrl(
+  chainId: number,
+  url: string,
+  queryable?: Queryable,
+): Promise<ChainEndpointRecord | null> {
+  const client = getQueryable(queryable);
+
+  const result = await client.query<ChainEndpointRow>(
+    `SELECT id::TEXT AS id,
+            chain_id,
+            url,
+            label,
+            is_primary,
+            enabled,
+            qps,
+            min_span,
+            max_span,
+            weight,
+            order_index,
+            last_health,
+            last_checked_at,
+            updated_at
+       FROM chain_endpoints
+      WHERE chain_id = $1 AND url = $2
+      ORDER BY id::BIGINT ASC
+      LIMIT 1`,
+    [chainId, url],
+  );
+
+  if (result.rowCount === 0) {
+    return null;
+  }
+
+  return mapChainEndpointRow(result.rows[0]!);
+}
+
 export async function unsetPrimaryForOtherEndpoints(
   chainId: number,
   primaryEndpointId: string,

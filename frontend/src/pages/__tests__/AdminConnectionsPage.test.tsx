@@ -262,9 +262,13 @@ describe("AdminConnectionsPage", () => {
 
     await waitFor(() => {
       expect(testRpcMock).toHaveBeenCalledWith(
-        { url: "https://rpc-mainnet.example", chainId: 1 },
+        { url: "https://rpc-mainnet.example", chainId: 1, endpointId: "endpoint-1" },
         "test-token",
       );
+    });
+
+    await waitFor(() => {
+      expect(mutateMock).toHaveBeenCalled();
     });
   });
 

@@ -227,6 +227,7 @@ export type AdminEndpointUpdatePayload = Partial<AdminEndpointCreatePayload>;
 export interface AdminRpcTestPayload {
   url: string;
   chainId?: number | null;
+  endpointId?: string | null;
 }
 
 export async function fetchAdminConnections(
@@ -410,6 +411,10 @@ function buildRpcTestRequestBody(payload: AdminRpcTestPayload) {
 
   if (payload.chainId !== undefined && payload.chainId !== null) {
     body.chainId = payload.chainId;
+  }
+
+  if (payload.endpointId !== undefined && payload.endpointId !== null) {
+    body.endpointId = payload.endpointId;
   }
 
   return body;

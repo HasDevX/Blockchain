@@ -97,6 +97,7 @@ describe("Admin API routes", () => {
   let createChainEndpointMock: ReturnType<typeof vi.fn>;
   let getChainEndpointMock: ReturnType<typeof vi.fn>;
   let updateChainEndpointMock: ReturnType<typeof vi.fn>;
+  let findChainEndpointByUrlMock: ReturnType<typeof vi.fn>;
   let disableChainEndpointMock: ReturnType<typeof vi.fn>;
   let invalidateChainConfigCacheMock: ReturnType<typeof vi.fn>;
   let unsetPrimaryForOtherEndpointsMock: ReturnType<typeof vi.fn>;
@@ -145,6 +146,7 @@ describe("Admin API routes", () => {
       maxSpan: 1200,
       updatedAt: new Date("2024-01-01T00:30:00.000Z"),
     }));
+    findChainEndpointByUrlMock = vi.fn(async () => chainEndpointRecord);
     disableChainEndpointMock = vi.fn(async () => ({
       ...chainEndpointRecord,
       label: "Primary RPC",
@@ -194,6 +196,7 @@ describe("Admin API routes", () => {
       createChainEndpoint: createChainEndpointMock,
       getChainEndpoint: getChainEndpointMock,
       updateChainEndpoint: updateChainEndpointMock,
+  findChainEndpointByUrl: findChainEndpointByUrlMock,
       disableChainEndpoint: disableChainEndpointMock,
       unsetPrimaryForOtherEndpoints: unsetPrimaryForOtherEndpointsMock,
     }));
@@ -511,11 +514,20 @@ describe("Admin API routes", () => {
         const response = await request(app)
           .post("/api/admin/test-rpc")
           .set("Authorization", authHeader)
-          .send({ url: "https://rpc.example" });
+          .send({ url: "https://rpc.example", chainId: 137, endpointId: "endpoint-1" });
 
         expect(response.status).toBe(200);
         expect(response.body).toEqual({ ok: true, tip: "0x10", latency_ms: 600 });
         expect(fetchSpy).toHaveBeenCalledWith("https://rpc.example", expect.anything());
+        expect(getChainEndpointMock).toHaveBeenCalledWith(137, "endpoint-1");
+        expect(updateChainEndpointMock).toHaveBeenCalledWith(
+          137,
+          "endpoint-1",
+          expect.objectContaining({
+            lastHealth: "tip 0x10",
+            lastCheckedAt: expect.any(Date),
+          }),
+        );
       } finally {
         vi.useRealTimers();
         vi.unstubAllGlobals();
@@ -534,10 +546,18 @@ describe("Admin API routes", () => {
       const response = await request(app)
         .post("/api/admin/test-rpc")
         .set("Authorization", authHeader)
-        .send({ url: "https://rpc.example" });
+        .send({ url: "https://rpc.example", chainId: 137, endpointId: "endpoint-1" });
 
       expect(response.status).toBe(200);
       expect(response.body).toEqual({ ok: false, error: "http_error", status: 500 });
+      expect(updateChainEndpointMock).toHaveBeenCalledWith(
+        137,
+        "endpoint-1",
+        expect.objectContaining({
+          lastHealth: "http_error:500",
+          lastCheckedAt: expect.any(Date),
+        }),
+      );
 
       vi.unstubAllGlobals();
     });
@@ -550,10 +570,18 @@ describe("Admin API routes", () => {
       const response = await request(app)
         .post("/api/admin/test-rpc")
         .set("Authorization", authHeader)
-        .send({ url: "https://rpc.example" });
+        .send({ url: "https://rpc.example", chainId: 137, endpointId: "endpoint-1" });
 
       expect(response.status).toBe(200);
-      expect(response.body).toEqual({ ok: false, error: "network_error", message: "boom" });
+      expect(response.body).toEqual({ ok: false, error: "timeout", message: "boom" });
+      expect(updateChainEndpointMock).toHaveBeenCalledWith(
+        137,
+        "endpoint-1",
+        expect.objectContaining({
+          lastHealth: "timeout",
+          lastCheckedAt: expect.any(Date),
+        }),
+      );
 
       vi.unstubAllGlobals();
     });
